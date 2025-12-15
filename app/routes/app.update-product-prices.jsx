@@ -46,7 +46,11 @@ export const action = async ({ request }) => {
 
             // Validate Price
             let newPrice = null;
-            if (priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== "") {
+            if (priceRaw === undefined || priceRaw === null || String(priceRaw).trim() === "") {
+                results.errors.push(`Skipped SKU ${sku}: Please enter price`);
+                results.failedRows.push({ ...row, "Error Reason": 'Please enter price' });
+                continue;
+            } else {
                 const parsed = parseFloat(priceRaw);
                 if (isNaN(parsed)) {
                     results.errors.push(`Skipped SKU ${sku}: Invalid Price value '${priceRaw}'`);
@@ -58,18 +62,30 @@ export const action = async ({ request }) => {
 
             // Validate CompareAt Price
             let newCompareAtPrice = null;
-            if (compareAtPriceRaw !== undefined && compareAtPriceRaw !== null && String(compareAtPriceRaw).trim() !== "") {
-                const parsed = parseFloat(compareAtPriceRaw);
-                if (isNaN(parsed)) {
-                    results.errors.push(`Skipped SKU ${sku}: Invalid CompareAt Price value '${compareAtPriceRaw}'`);
-                    results.failedRows.push({ ...row, "Error Reason": 'Invalid CompareAt Price value' });
-                    continue;
+            let shouldClearCompareAt = false;
+
+            // Check if column exists in the row data (case-insensitive)
+            const compareAtKey = keys.find(k => k.toLowerCase() === "compareat price");
+
+            if (compareAtKey) {
+                // Column exists
+                if (compareAtPriceRaw !== undefined && compareAtPriceRaw !== null && String(compareAtPriceRaw).trim() !== "") {
+                    // Has value
+                    const parsed = parseFloat(compareAtPriceRaw);
+                    if (isNaN(parsed)) {
+                        results.errors.push(`Skipped SKU ${sku}: Invalid CompareAt Price value '${compareAtPriceRaw}'`);
+                        results.failedRows.push({ ...row, "Error Reason": 'Invalid CompareAt Price value' });
+                        continue;
+                    }
+                    newCompareAtPrice = parsed;
+                } else {
+                    // Column exists but value is empty -> Clear it
+                    shouldClearCompareAt = true;
                 }
-                newCompareAtPrice = parsed;
             }
 
-            if (newPrice === null && newCompareAtPrice === null) {
-                // Both fields missing or empty - count as treated/success
+            if (newPrice === null && newCompareAtPrice === null && !shouldClearCompareAt) {
+                // Both fields missing or empty (and no clear instruction) - count as treated/success
                 results.updated++;
                 continue;
             }
@@ -135,7 +151,7 @@ export const action = async ({ request }) => {
 
             // Check CompareAt Price
             if (newCompareAtPrice !== null) {
-                // Handle case where existing compareAtPrice might be null
+                // Has new valid value
                 const currentCompareAt = variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null;
 
                 if (currentCompareAt !== newCompareAtPrice) {
@@ -143,6 +159,14 @@ export const action = async ({ request }) => {
                     needsUpdate = true;
                 } else {
                     skipReason.push("CompareAt Price matches");
+                }
+            } else if (shouldClearCompareAt) {
+                // Instruction to clear
+                if (variant.compareAtPrice !== null) {
+                    input.compareAtPrice = null;
+                    needsUpdate = true;
+                } else {
+                    skipReason.push("CompareAt Price already empty");
                 }
             }
 
@@ -284,9 +308,16 @@ export default function PriceUpdate() {
                 worksheet.eachRow((row, rowNumber) => {
                     if (rowNumber > 1) {
                         const rowData = {};
-                        row.eachCell((cell, colNumber) => {
-                            if (headers[colNumber]) {
-                                rowData[headers[colNumber]] = cell.value;
+                        // Iterate all headers to ensure we capture empty cells too
+                        headers.forEach((header, index) => {
+                            // Column indices are 1-based in ExcelJS, headers array is 0-based? 
+                            // Wait, earlier code: headers[colNumber] = cell.value. eachCell gives 1-based colNumber.
+                            // So headers array indices might be sparse or 1-based?
+                            // Let's check: headers starts empty. headers[colNumber] = ...
+                            // Yes, it's sparse array with 1-based indices.
+                            if (header) {
+                                const cellValue = row.getCell(index).value;
+                                rowData[header] = cellValue;
                             }
                         });
 
