@@ -3,9 +3,10 @@ import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "react-r
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { Pagination } from "@shopify/polaris";
+import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
     const direction = url.searchParams.get("direction");
@@ -77,32 +78,113 @@ export const loader = async ({ request }) => {
     const pageInfo = responseJson.data?.products?.pageInfo || {};
     const totalCount = responseJson.data?.productsCount?.count || 0;
 
-    return { products, pageInfo, totalCount };
+    // Fetch saved price adjustments for the shop
+    const adjustments = await prisma.priceAdjustment.findMany({
+        where: { shop: session.shop },
+    });
+
+    // Create a map of variantId -> adjustment
+    const initialAdjustments = adjustments.reduce((acc, curr) => {
+        acc[curr.variantId] = curr.adjustment;
+        return acc;
+    }, {});
+
+    return { products, pageInfo, totalCount, initialAdjustments };
 };
 
 export const action = async ({ request }) => {
-    const { admin } = await authenticate.admin(request);
-
+    const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
+
+    const bulkUpdates = formData.get("bulkUpdates");
+    if (bulkUpdates) {
+        const updates = JSON.parse(bulkUpdates);
+
+        // Process updates and deletions
+        for (const update of updates) {
+            // If adjustment is empty, delete the entry
+            if (update.adjustment === '' || update.adjustment === null) {
+                await prisma.priceAdjustment.deleteMany({
+                    where: {
+                        shop: session.shop,
+                        variantId: update.variantId
+                    }
+                });
+            } else {
+                // Otherwise upsert the value
+                // Otherwise manual check to prevent burning IDs
+                const where = {
+                    shop_variantId: {
+                        shop: session.shop,
+                        variantId: update.variantId
+                    }
+                };
+                const existing = await prisma.priceAdjustment.findUnique({ where });
+
+                if (existing) {
+                    await prisma.priceAdjustment.update({
+                        where,
+                        data: { adjustment: parseFloat(update.adjustment) }
+                    });
+                } else {
+                    await prisma.priceAdjustment.create({
+                        data: {
+                            shop: session.shop,
+                            variantId: update.variantId,
+                            adjustment: parseFloat(update.adjustment)
+                        }
+                    });
+                }
+            }
+        }
+
+        return { success: true, count: updates.length };
+    }
+
     const variantId = formData.get("variantId");
     const adjustment = formData.get("adjustment");
 
-    // Here you would implement the price update logic
-    // For now, just return success
+    if (variantId && adjustment) {
+        const where = {
+            shop_variantId: {
+                shop: session.shop,
+                variantId: variantId
+            }
+        };
+        const existing = await prisma.priceAdjustment.findUnique({ where });
+
+        if (existing) {
+            await prisma.priceAdjustment.update({
+                where,
+                data: { adjustment: parseFloat(adjustment) }
+            });
+        } else {
+            await prisma.priceAdjustment.create({
+                data: {
+                    shop: session.shop,
+                    variantId: variantId,
+                    adjustment: parseFloat(adjustment)
+                }
+            });
+        }
+    }
+
     return { success: true, variantId, adjustment };
 };
 
 export default function B2BPricing() {
-    const { products, pageInfo, totalCount } = useLoaderData();
+    const { products, pageInfo, totalCount, initialAdjustments } = useLoaderData();
     const shopify = useAppBridge();
     const fetcher = useFetcher();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const [priceAdjustments, setPriceAdjustments] = useState({});
+    const [priceAdjustments, setPriceAdjustments] = useState(initialAdjustments || {});
     const [selectedVariants, setSelectedVariants] = useState({});
 
     // Initialize searchTerm from URL param
     const [searchTerm, setSearchTerm] = useState(searchParams.get("query") || "");
+
+    const isSaving = fetcher.state !== "idle";
 
     const currentPage = parseInt(searchParams.get("page") || "1", 10);
 
@@ -133,11 +215,31 @@ export default function B2BPricing() {
     // Use products directly as they are now filtered by the server
     const filteredProducts = products;
 
-    const handlePriceAdjustmentChange = (productId, value) => {
-        setPriceAdjustments(prev => ({
-            ...prev,
-            [productId]: value
-        }));
+    const handlePriceAdjustmentChange = (variantId, value) => {
+        // Validation for the state update
+        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+            setPriceAdjustments(prev => ({
+                ...prev,
+                [variantId]: value
+            }));
+        }
+    };
+
+    const handleKeyDown = (e) => {
+        // Allow navigation and editing keys
+        const allowedKeys = ['Backspace', 'Delete', 'Tab', 'Enter', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
+        if (allowedKeys.includes(e.key) || e.ctrlKey || e.metaKey) return;
+
+        // Allow single decimal point
+        if (e.key === '.') {
+            if (e.target.value.includes('.')) e.preventDefault();
+            return;
+        }
+
+        // Block non-numeric keys
+        if (!/^\d$/.test(e.key)) {
+            e.preventDefault();
+        }
     };
 
     const handleVariantChange = (productId, variantId) => {
@@ -184,21 +286,43 @@ export default function B2BPricing() {
     // or rely on what we have.
     const paginationLabel = totalCount > 0 ? `${startItem}-${endItem} of ${totalCount} products` : "No products";
 
-    const handleSaveAdjustment = (productId) => {
-        const adjustment = priceAdjustments[productId];
-        if (adjustment) {
+
+
+    const handleBulkSave = () => {
+        const updates = [];
+        // Send all adjustments for currently visible products (including empty ones for deletion)
+        filteredProducts.forEach(({ node: product }) => {
+            const selectedVariant = getSelectedVariant(product);
+            if (selectedVariant) {
+                const adjustment = priceAdjustments[selectedVariant.id];
+                // Include if there's a value in state (even if empty string)
+                if (adjustment !== undefined) {
+                    updates.push({
+                        variantId: selectedVariant.id,
+                        adjustment: adjustment
+                    });
+                }
+            }
+        });
+
+        if (updates.length > 0) {
             fetcher.submit(
-                { variantId: selectedVariants[productId], adjustment },
+                { bulkUpdates: JSON.stringify(updates) },
                 { method: "POST" }
             );
-            shopify.toast.show(`Price adjustment saved for variant`);
+        } else {
+            shopify.toast.show("No changes to save on this page");
         }
     };
 
     return (
         <s-page heading="B2B Pricing">
             <s-box paddingBlockStart="large" paddingBlockEnd="large">
-                <s-section heading="All Products">
+                <s-section>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        <s-text variant="headingMd" as="h2">All Products</s-text>
+                        <s-button variant="primary" onClick={handleBulkSave} loading={isSaving}>Save</s-button>
+                    </div>
                     <s-stack gap="400" direction="block">
                         {/* Search Bar */}
                         <s-text-field
@@ -292,12 +416,14 @@ export default function B2BPricing() {
                                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '200px' }}>
                                                                 <s-text-field
                                                                     label=""
-                                                                    value={priceAdjustments[product.id] || ''}
-                                                                    onInput={(e) => handlePriceAdjustmentChange(product.id, e.target.value)}
+                                                                    value={priceAdjustments[selectedVariant.id] || ''}
+                                                                    onInput={(e) => handlePriceAdjustmentChange(selectedVariant.id, e.target.value)}
                                                                     placeholder="0.00"
                                                                     prefix="$"
                                                                     type="number"
                                                                     step="0.01"
+                                                                    onKeyDown={handleKeyDown}
+                                                                    autoComplete="off"
                                                                 />
                                                             </div>
                                                         </s-table-cell>
