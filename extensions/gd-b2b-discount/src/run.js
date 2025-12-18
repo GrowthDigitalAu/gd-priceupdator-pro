@@ -22,37 +22,34 @@ export function run(input) {
   const discounts = [];
 
   for (const line of input.cart.lines) {
-    if (line.merchandise && line.merchandise.__typename === "ProductVariant") {
+    if (line.merchandise) {
       const metaValue = line.merchandise.metafield?.value;
-      console.error(`Link: ${line.id}, Meta: ${metaValue}, Cost: ${line.cost.amountPerQuantity.amount}`);
 
       if (metaValue) {
         const targetPrice = parseFloat(metaValue);
         const currentPrice = parseFloat(line.cost.amountPerQuantity.amount);
 
-        console.error(`Target: ${targetPrice}, Current: ${currentPrice}`);
-
         // Calculate difference
         if (targetPrice < currentPrice) {
           const discountAmount = currentPrice - targetPrice;
-          console.error(`Applying Discount: ${discountAmount}`);
+          const percentage = (discountAmount / currentPrice) * 100;
 
-          if (discountAmount > 0.01) {
+          if (percentage > 0) {
             discounts.push({
               targets: [{ cartLine: { id: line.id } }],
               value: {
-                fixedAmount: {
-                  amount: discountAmount
+                percentage: {
+                  value: percentage.toString()
                 }
               },
-              message: "Special Price"
+              message: "B2B Price"
             });
           }
         } else {
-          console.error(`No discount: Target >= Current`);
+          console.log(`No discount: Target >= Current`);
         }
       } else {
-        console.error("No Metafield Value found for variant");
+        console.log("No Metafield Value found for variant");
       }
     }
   }
