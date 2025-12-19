@@ -10,11 +10,12 @@ export const loader = async ({ request }) => {
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
     const direction = url.searchParams.get("direction");
-    const query = url.searchParams.get("query") || ""; // Get search query
+    const rawQuery = url.searchParams.get("query") || "";
+    const query = rawQuery ? `(title:*${rawQuery}* OR sku:*${rawQuery}*)` : "";
 
     let queryVariables = {
         first: 10,
-        query: query, // Pass query to GraphQL
+        query: query,
     };
 
     if (cursor) {
@@ -343,6 +344,7 @@ export default function B2BPricing() {
                                     <s-table>
                                         <s-table-header-row>
                                             <s-table-header>Product</s-table-header>
+                                            <s-table-header>SKU</s-table-header>
                                             <s-table-header>Base price</s-table-header>
                                             <s-table-header>Price adjustment</s-table-header>
                                             <s-table-header>Add Conditions</s-table-header>
@@ -400,6 +402,11 @@ export default function B2BPricing() {
                                                                     )}
                                                                 </div>
                                                             </div>
+                                                        </s-table-cell>
+                                                        <s-table-cell>
+                                                            <s-text variant="bodyMd">
+                                                                {selectedVariant?.sku || '-'}
+                                                            </s-text>
                                                         </s-table-cell>
                                                         <s-table-cell>
                                                             <s-text variant="bodyMd">

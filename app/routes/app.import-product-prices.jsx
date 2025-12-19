@@ -43,6 +43,7 @@ export const action = async ({ request }) => {
 
             const priceRaw = getCol("Price");
             const compareAtPriceRaw = getCol("CompareAt Price");
+            const b2bPriceRaw = getCol("B2B Price");
 
             // Validate Price
             let newPrice = null;
@@ -108,6 +109,9 @@ export const action = async ({ request }) => {
                                 id
                                 price
                                 compareAtPrice
+                                metafield(namespace: "app", key: "original_price") {
+                                    value
+                                }
                                 product {
                                     id
                                 }
@@ -167,6 +171,23 @@ export const action = async ({ request }) => {
                     needsUpdate = true;
                 } else {
                     skipReason.push("CompareAt Price already empty");
+                }
+            }
+
+            // Check B2B Price
+            if (b2bPriceRaw !== undefined && b2bPriceRaw !== null && String(b2bPriceRaw).trim() !== "") {
+                const parsed = parseFloat(b2bPriceRaw);
+                if (!isNaN(parsed)) {
+                     const currentB2BPrice = variant.metafield?.value ? parseFloat(variant.metafield.value) : null;
+                     if (currentB2BPrice !== parsed) {
+                        input.metafields = [{
+                            namespace: "app",
+                            key: "original_price",
+                            value: String(parsed),
+                            type: "number_decimal"
+                        }];
+                        needsUpdate = true;
+                     }
                 }
             }
 

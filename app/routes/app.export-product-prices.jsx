@@ -21,6 +21,9 @@ export const action = async ({ request }) => {
                   sku
                   price
                   compareAtPrice
+                  metafield(namespace: "app", key: "original_price") {
+                    value
+                  }
                 }
               }
             }
@@ -44,10 +47,12 @@ export const action = async ({ request }) => {
 
         product.variants.edges.forEach((variantEdge) => {
             const variant = variantEdge.node;
+            const b2bPrice = variant.metafield?.value ? parseFloat(variant.metafield.value).toFixed(2) : "";
             rows.push({
                 "SKU": variant.sku || "",
                 "Price": variant.price || "",
-                "CompareAt Price": variant.compareAtPrice || ""
+                "CompareAt Price": variant.compareAtPrice || "",
+                "B2B Price": b2bPrice
             });
         });
     });

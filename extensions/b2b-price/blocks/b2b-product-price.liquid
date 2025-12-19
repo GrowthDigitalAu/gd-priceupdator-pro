@@ -1,0 +1,45 @@
+{% assign selected_product = block.settings.product %}
+{% assign has_b2b_tag = false %}
+{% for tag in customer.tags %}
+  {% if tag == 'b2b' %}
+    {% assign has_b2b_tag = true %}
+  {% endif %}
+{% endfor %}
+
+{% assign b2b_price = selected_product.selected_or_first_available_variant.metafields.app.original_price.value
+  | times: 100
+%}
+{% if has_b2b_tag and b2b_price > 0 %}
+  <div>
+    <span>{{ b2b_price | money }}</span>
+    <span style="text-decoration: line-through;">
+      {{- selected_product.price | money -}}
+    </span>
+  </div>
+{% elsif selected_product.compare_at_price > selected_product.price %}
+  <div>
+    <span>{{ selected_product.price | money }}</span>
+    <span style="text-decoration: line-through;">
+      {{- selected_product.compare_at_price | money -}}
+    </span>
+  </div>
+{% else %}
+  <div>
+    <span>{{ selected_product.price | money }}</span>
+  </div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "B2B Product Price",
+  "target": "section",
+  "settings": [
+    {
+      "type": "product",
+      "id": "product",
+      "label": "product",
+      "autofill": true
+    }
+  ]
+}
+{% endschema %}
