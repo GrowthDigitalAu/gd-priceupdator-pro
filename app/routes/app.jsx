@@ -1,4 +1,4 @@
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, useLoaderData, useRouteError, Link, useLocation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -23,15 +23,29 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <NavMenu>
         <s-link href="/app" rel="home">Home</s-link>
+        <s-link href="/app/forms">Custom Forms</s-link>
         <s-link href="/app/b2b-pricing">B2B Product Price</s-link>
         <s-link href="/app/import-product-prices">Import Product Prices</s-link>
         <s-link href="/app/export-product-prices">Export Product Prices</s-link>
         <s-link href="/app/how-to-use">How To Use</s-link>
       </NavMenu>
-      <PolarisAppProvider i18n={translations}>
+      <PolarisAppProvider i18n={translations} linkComponent={LinkAdapter}>
         <Outlet />
       </PolarisAppProvider>
     </AppProvider>
+  );
+}
+
+function LinkAdapter({ url, children, ...rest }) {
+  const location = useLocation();
+  const to = typeof url === 'string' && url.startsWith('/') 
+    ? `${url}${location.search}`
+    : url;
+
+  return (
+    <Link to={to} {...rest}>
+      {children}
+    </Link>
   );
 }
 

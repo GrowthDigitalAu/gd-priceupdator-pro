@@ -32,3 +32,29 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model B2BPriceAdjustment {
+  id        Int      @id @default(autoincrement())
+  variantId String   @unique // The ID of the product variant
+  amount    Float    // The raw price adjustment value (can be negative or positive)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Form {
+  id        Int      @id @default(autoincrement())
+  title     String
+  fields    String   // JSON string storing field configurations
+  shop      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  submissions FormSubmission[]
+}
+
+model FormSubmission {
+  id        Int      @id @default(autoincrement())
+  formId    Int
+  form      Form     @relation(fields: [formId], references: [id])
+  data      String   // JSON string storing submission data
+  createdAt DateTime @default(now())
+}
