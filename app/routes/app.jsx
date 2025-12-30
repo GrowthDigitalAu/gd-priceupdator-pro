@@ -3,11 +3,9 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
-import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import translations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "../shopify.server";
-
-export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+import { forwardRef } from "react";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -16,6 +14,19 @@ export const loader = async ({ request }) => {
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+const LinkAdapter = forwardRef(function LinkAdapter({ url, children, ...rest }, ref) {
+  const location = useLocation();
+  const to = typeof url === 'string' && url.startsWith('/') 
+    ? `${url}${location.search}`
+    : url;
+
+  return (
+    <Link to={to} ref={ref} {...rest}>
+      {children}
+    </Link>
+  );
+});
+
 export default function App() {
   const { apiKey } = useLoaderData();
 
@@ -23,7 +34,7 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <NavMenu>
         <s-link href="/app" rel="home">Home</s-link>
-        <s-link href="/app/forms">Custom Forms</s-link>
+        <s-link href="/app/forms">Custom Form</s-link>
         <s-link href="/app/b2b-pricing">B2B Product Price</s-link>
         <s-link href="/app/import-product-prices">Import Product Prices</s-link>
         <s-link href="/app/export-product-prices">Export Product Prices</s-link>
@@ -33,19 +44,6 @@ export default function App() {
         <Outlet />
       </PolarisAppProvider>
     </AppProvider>
-  );
-}
-
-function LinkAdapter({ url, children, ...rest }) {
-  const location = useLocation();
-  const to = typeof url === 'string' && url.startsWith('/') 
-    ? `${url}${location.search}`
-    : url;
-
-  return (
-    <Link to={to} {...rest}>
-      {children}
-    </Link>
   );
 }
 

@@ -44,6 +44,9 @@ model B2BPriceAdjustment {
 model Form {
   id        Int      @id @default(autoincrement())
   title     String
+  content   String?
+  buttonLabel String?
+  disclaimer  String?
   fields    String   // JSON string storing field configurations
   shop      String
   createdAt DateTime @default(now())
