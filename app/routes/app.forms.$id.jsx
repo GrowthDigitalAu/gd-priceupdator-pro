@@ -1,4 +1,4 @@
-import { useLoaderData, useSubmit, useNavigation, Form as RemixForm, redirect, useRouteError, useActionData } from "react-router";
+import { useLoaderData, useSubmit, useNavigation, Form as RemixForm, redirect, useRouteError, useActionData, useNavigate } from "react-router";
 import { Page, Layout, Card, TextField, Button, BlockStack, Box, Text, Select, Checkbox, InlineStack, Banner, Divider, Badge, Icon, Tooltip, IndexTable, EmptyState, ColorPicker, RangeSlider, Collapsible, ButtonGroup } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { DeleteIcon, DuplicateIcon, ClipboardIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
@@ -346,6 +346,7 @@ export default function FormEditor() {
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const isSaving = navigation.state === "submitting";
 
   const [title, setTitle] = useState(form?.title || "Contact Us");
@@ -455,18 +456,14 @@ export default function FormEditor() {
 
   return (
     <Page>
-      <TitleBar
-        title={form ? "Edit Form" : "Create New Form"}
-        primaryAction={{
-          content: "Save",
-          loading: isSaving,
-          onAction: handleSave,
-        }}
-        secondaryActions={form ? [{
-          content: "View Submissions",
-          url: `/app/forms/${form.id}/submissions`,
-        }] : []}
-      />
+      <TitleBar title={form ? "Edit Form" : "Create New Form"}>
+        <button variant="primary" onClick={handleSave} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save"}
+        </button>
+        {form && (
+          <button onClick={() => navigate(`/app/forms/${form.id}/submissions`)}>View Submissions</button>
+        )}
+      </TitleBar>
       <Layout>
         {actionData?.status === "error" && (
           <Layout.Section>
