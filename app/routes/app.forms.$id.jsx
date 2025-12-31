@@ -1,5 +1,4 @@
 import { useLoaderData, useSubmit, useNavigation, Form as RemixForm, redirect, useRouteError, useActionData } from "react-router";
-
 import { Page, Layout, Card, TextField, Button, BlockStack, Box, Text, Select, Checkbox, InlineStack, Banner, Divider, Badge, Icon, Tooltip, IndexTable, EmptyState, ColorPicker, RangeSlider, Collapsible, ButtonGroup } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { DeleteIcon, DuplicateIcon, ClipboardIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
@@ -691,14 +690,14 @@ export default function FormEditor() {
                 <Text variant="headingSm" as="h5">Toolbox</Text>
                 <InlineStack gap="200" wrap>
                   {fieldTypes.map(ft => (
-                    <Button
+                    <s-button
                       key={ft.value}
                       onClick={() => addField(ft.value)}
                       size="slim"
                       variant={ft.value === 'header' ? 'secondary' : 'primary'} // Visual distinction
                     >
                       {ft.label}
-                    </Button>
+                    </s-button>
                   ))}
                 </InlineStack>
               </BlockStack>
