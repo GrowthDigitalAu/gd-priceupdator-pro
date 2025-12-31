@@ -21,7 +21,7 @@ api_version = "2026-01"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,read_products, read_discounts, write_discounts"
+scopes = "write_products,read_products, read_discounts, write_discounts, read_customers, write_customers"
 
 [auth]
 redirect_urls = [
@@ -29,3 +29,8 @@ redirect_urls = [
     "https://gd-priceupdator-pro.onrender.com/auth/shopify/callback",
     "https://gd-priceupdator-pro.onrender.com/api/auth/callback"
 ]
+
+[app_proxy]
+url = "https://gd-priceupdator-pro.onrender.com/api"
+subpath = "proxy"
+prefix = "apps"
