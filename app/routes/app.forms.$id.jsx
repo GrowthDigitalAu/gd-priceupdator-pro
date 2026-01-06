@@ -545,7 +545,7 @@ export default function FormEditor() {
           {isSaving ? "Saving..." : "Save"}
         </button>
         {form && (
-          <button onClick={() => navigate(`/app/forms/${form.id}/submissions`)}>View Submissions</button>
+          <button onClick={() => navigate('/app/forms')}>View Submissions</button>
         )}
       </TitleBar>
       <Layout>
@@ -726,7 +726,7 @@ export default function FormEditor() {
 
                     {fields.length === 0 && (
                       <div style={{ textAlign: 'center', padding: '40px', color: '#999', border: '2px dashed #ddd', borderRadius: '8px' }}>
-                        Click "Add Field" from the right sidebar to start building.
+                        Select fields from the toolbox to start building.
                       </div>
                     )}
 

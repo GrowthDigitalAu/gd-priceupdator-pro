@@ -1,4 +1,4 @@
-import { useLoaderData, Link, useRouteError, useSubmit, useActionData } from "react-router";
+import { useLoaderData, Link, useRouteError, useSubmit, useActionData, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { EmptyState, Tabs } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -214,6 +214,7 @@ import { useState, useEffect } from "react";
 
 export default function Forms() {
   const { forms, recentSubmissions } = useLoaderData();
+  const navigate = useNavigate();
   const submit = useSubmit();
   const actionData = useActionData();
   const [selectedTab, setSelectedTab] = useState(0);
@@ -303,7 +304,7 @@ export default function Forms() {
                       </s-paragraph>
                     </s-stack>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <s-button url={`/app/forms/${item.id}`}>Edit</s-button>
+                      <s-button onClick={() => navigate(`/app/forms/${item.id}`)}>Edit</s-button>
                       <s-button tone="critical" onClick={() => handleDelete(item.id)}>Delete</s-button>
                     </div>
                   </div>
