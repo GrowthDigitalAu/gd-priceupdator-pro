@@ -122,39 +122,39 @@
                     };
 
                     if (field.type === 'textarea') {
+                        input = document.createElement('textarea');
+                        input.className = 'gd-form-input';
+                        input.rows = 4;
+                        commonInputStyles(input);
+                        if (field.required) input.required = true;
+                    } else if (field.type === 'select') {
+                        input = document.createElement('select');
+                        input.className = 'gd-form-input';
+                        if (field.required) input.required = true;
+                        commonInputStyles(input);
 
-                    input = document.createElement('textarea');
-                    input.className = 'gd-form-input';
-                    input.rows = 4;
-                    commonInputStyles(input);
-                    input.className = 'gd-form-input';
-                    if (field.required) input.required = true;
-                    commonInputStyles(input);
+                        const placeholderColor = settings.placeholderColor || '#999';
+                        const textColor = settings.color || '#000'; 
+                        
+                        input.style.color = placeholderColor;
 
-                    const placeholderColor = settings.placeholderColor || '#999';
-                    const textColor = settings.color || '#000'; 
-                    
-                    input.style.color = placeholderColor;
+                        input.addEventListener('change', function() {
+                            this.style.color = this.value === '' ? placeholderColor : textColor;
+                        });
 
-                    input.addEventListener('change', function() {
-                        this.style.color = this.value === '' ? placeholderColor : textColor;
-                    });
+                        const defaultOpt = document.createElement('option');
+                        defaultOpt.text = field.placeholder || 'Choose option...';
+                        defaultOpt.value = '';
+                        defaultOpt.selected = true;
+                        input.appendChild(defaultOpt);
 
-                    const defaultOpt = document.createElement('option');
-                    defaultOpt.text = field.placeholder || 'Choose option...';
-                    defaultOpt.value = '';
-
-                    defaultOpt.selected = true;
-
-                    input.appendChild(defaultOpt);
-
-                    field.options.forEach((opt) => {
-                        const o = document.createElement('option');
-                        o.text = opt;
-                        o.value = opt;
-                        o.style.color = textColor;
-                        input.appendChild(o);
-                    });
+                        field.options.forEach((opt) => {
+                            const o = document.createElement('option');
+                            o.text = opt;
+                            o.value = opt;
+                            o.style.color = textColor;
+                            input.appendChild(o);
+                        });
                     } else if (field.type === 'radio') {
 
                         const radioGroup = document.createElement('div');

@@ -64,18 +64,121 @@ export const action = async ({ request }) => {
     return { status: "success" };
   }
 
-  if (intent === "approve" || intent === "reject") {
+  if (intent === "reject") {
     if (!submissionId) return { status: "error", message: "Submission ID required" };
 
-    if (intent === "reject") {
-      await db.formSubmission.update({
-        where: { id: parseInt(submissionId) },
-        data: { status: "REJECTED" }
-      });
-      return { status: "success", message: "Submission rejected" };
+    const submission = await db.formSubmission.findUnique({
+      where: { id: parseInt(submissionId) }
+    });
+    const data = JSON.parse(submission.data);
+
+    // Find email
+    const keys = Object.keys(data);
+    const emailKey = keys.find(k => k.toLowerCase().includes("email"));
+    const firstNameKey = keys.find(k => k.toLowerCase().includes("first"));
+    const lastNameKey = keys.find(k => k.toLowerCase().includes("last"));
+    const nameKey = keys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("name"));
+
+    const email = emailKey ? data[emailKey] : null;
+    const firstName = firstNameKey ? data[firstNameKey] : (nameKey ? data[nameKey] : "");
+    const lastName = lastNameKey ? data[lastNameKey] : "";
+
+    if (!email) {
+      return { status: "error", message: "Could not find an email address in the submission data." };
     }
 
-    // Approve Logic
+    try {
+      // Check if customer exists
+      const customerQuery = await admin.graphql(
+        `#graphql
+         query getCustomer($query: String!) {
+           customers(first: 1, query: $query) {
+             edges {
+               node {
+                 id
+                 tags
+               }
+             }
+           }
+         }`,
+        { variables: { query: `email:${email}` } }
+      );
+      const customerJson = await customerQuery.json();
+      const existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
+
+      if (existingCustomer) {
+        // Customer exists - remove B2B_approved if present and add B2B_rejected
+        let currentTags = existingCustomer.tags || [];
+        currentTags = currentTags.filter(tag => tag !== "B2B_approved");
+        if (!currentTags.includes("B2B_rejected")) {
+          currentTags.push("B2B_rejected");
+        }
+
+        const updateResponse = await admin.graphql(
+          `#graphql
+          mutation updateCustomer($input: CustomerInput!) {
+            customerUpdate(input: $input) {
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          { variables: { input: { id: existingCustomer.id, tags: currentTags } } }
+        );
+        const updateJson = await updateResponse.json();
+        if (updateJson.data?.customerUpdate?.userErrors?.length > 0) {
+          return { status: "error", message: "Failed to update tags: " + updateJson.data.customerUpdate.userErrors[0].message };
+        }
+      } else {
+        // Customer doesn't exist - create with B2B_rejected tag
+        const createResponse = await admin.graphql(
+          `#graphql
+          mutation customerCreate($input: CustomerInput!) {
+            customerCreate(input: $input) {
+              customer {
+                id
+                email
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          {
+            variables: {
+              input: {
+                email: email,
+                firstName: firstName,
+                lastName: lastName,
+                tags: ["B2B_rejected"]
+              }
+            }
+          }
+        );
+        const createJson = await createResponse.json();
+        if (createJson.data?.customerCreate?.userErrors?.length > 0) {
+          return { status: "error", message: "Failed to create customer: " + createJson.data.customerCreate.userErrors[0].message };
+        }
+      }
+    } catch (error) {
+      console.error("Customer Access Error (Reject):", error);
+      return {
+        status: "error",
+        message: "App does not have access to Customer data. Please approve 'Protected Customer Data' in Partner Dashboard."
+      };
+    }
+
+    await db.formSubmission.update({
+      where: { id: parseInt(submissionId) },
+      data: { status: "REJECTED" }
+    });
+
+    return { status: "success", message: "Submission rejected" };
+  }
+
+  if (intent === "approve") {
     const submission = await db.formSubmission.findUnique({
       where: { id: parseInt(submissionId) }
     });
@@ -119,7 +222,7 @@ export const action = async ({ request }) => {
               email: email,
               firstName: firstName,
               lastName: lastName,
-              tags: ["B2B_customer"]
+              tags: ["B2B_approved"]
             }
           }
         }
@@ -156,9 +259,11 @@ export const action = async ({ request }) => {
           const existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
 
           if (existingCustomer) {
-            const currentTags = existingCustomer.tags || [];
-            if (!currentTags.includes("B2B_customer")) {
-              const newTags = [...currentTags, "B2B_customer"];
+            let currentTags = existingCustomer.tags || [];
+            // Remove B2B_rejected if present
+            currentTags = currentTags.filter(tag => tag !== "B2B_rejected");
+            if (!currentTags.includes("B2B_approved")) {
+              const newTags = [...currentTags, "B2B_approved"];
               const updateResponse = await admin.graphql(
                 `#graphql
                     mutation updateCustomer($input: CustomerInput!) {

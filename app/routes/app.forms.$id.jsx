@@ -140,7 +140,7 @@ export const action = async ({ request, params }) => {
               email: email,
               firstName: firstName,
               lastName: lastName,
-              tags: ["B2B_customer"]
+              tags: ["B2B_approved"]
             }
           }
         }
@@ -169,9 +169,11 @@ export const action = async ({ request, params }) => {
           const existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
 
           if (existingCustomer) {
-            const currentTags = existingCustomer.tags || [];
-            if (!currentTags.includes("B2B_customer")) {
-              const newTags = [...currentTags, "B2B_customer"];
+            let currentTags = existingCustomer.tags || [];
+            // Remove B2B_rejected if present
+            currentTags = currentTags.filter(tag => tag !== "B2B_rejected");
+            if (!currentTags.includes("B2B_approved")) {
+              const newTags = [...currentTags, "B2B_approved"];
               const updateResponse = await admin.graphql(
                 `#graphql
                     mutation updateCustomer($input: CustomerInput!) {
