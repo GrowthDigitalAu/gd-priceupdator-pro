@@ -1,6 +1,6 @@
 import { useLoaderData, Link, useRouteError, useSubmit, useActionData, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { EmptyState, Tabs } from "@shopify/polaris";
+import { EmptyState } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
@@ -318,7 +318,45 @@ export default function Forms() {
           <s-box paddingBlockStart="large">
             <s-section>
               <s-text type="strong">Form Submissions</s-text>
-              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} />
+              <div style={{ 
+                display: 'flex', 
+                gap: '0', 
+                borderBottom: '1px solid #e1e3e5', 
+                marginBottom: '16px',
+                marginTop: '12px'
+              }}>
+                {tabs.map((tab, index) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setSelectedTab(index)}
+                    style={{
+                      padding: '12px 16px',
+                      border: 'none',
+                      background: 'transparent',
+                      cursor: 'pointer',
+                      borderBottom: selectedTab === index ? '2px solid #2c6ecb' : '2px solid transparent',
+                      color: selectedTab === index ? '#2c6ecb' : '#202223',
+                      fontWeight: selectedTab === index ? '600' : '400',
+                      fontSize: '14px',
+                      transition: 'all 0.2s ease',
+                      fontFamily: '-apple-system, BlinkMacSystemFont, San Francisco, Segoe UI, Roboto, Helvetica Neue, sans-serif',
+                      marginBottom: '-1px'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (selectedTab !== index) {
+                        e.currentTarget.style.color = '#2c6ecb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (selectedTab !== index) {
+                        e.currentTarget.style.color = '#202223';
+                      }
+                    }}
+                  >
+                    {tab.content}
+                  </button>
+                ))}
+              </div>
 
               {filteredSubmissions.length === 0 ? (
                 <EmptyState
