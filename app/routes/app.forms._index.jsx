@@ -1,4 +1,4 @@
-import { useLoaderData, Link, useRouteError, useSubmit, useActionData, useNavigate } from "react-router";
+import { useLoaderData, Link, useRouteError, useSubmit, useActionData, useNavigate, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { EmptyState } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -376,6 +376,7 @@ export default function Forms() {
   const { forms, recentSubmissions } = useLoaderData();
   const navigate = useNavigate();
   const submit = useSubmit();
+  const navigation = useNavigation();
   const actionData = useActionData();
   const [selectedTab, setSelectedTab] = useState(0);
 
@@ -537,6 +538,9 @@ export default function Forms() {
                       {filteredSubmissions.map(
                         (sub, index) => {
                           const data = JSON.parse(sub.data);
+                          const isSubmitting = navigation.state === "submitting" && navigation.formData.get("submissionId") === String(sub.id);
+                          const submittingIntent = isSubmitting ? navigation.formData.get("intent") : null;
+
                           return (
                             <s-table-row key={sub.id}>
                               <s-table-cell>
@@ -612,6 +616,7 @@ export default function Forms() {
                                       <s-button
                                         size="slim"
                                         variant="primary"
+                                        loading={submittingIntent === 'approve'}
                                         onClick={() => submit({ intent: 'approve', submissionId: sub.id }, { method: 'post' })}
                                       >
                                         Approve
@@ -621,6 +626,7 @@ export default function Forms() {
                                       <s-button
                                         size="slim"
                                         tone="critical"
+                                        loading={submittingIntent === 'reject'}
                                         onClick={() => submit({ intent: 'reject', submissionId: sub.id }, { method: 'post' })}
                                       >
                                         Reject
