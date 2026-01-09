@@ -45,6 +45,13 @@ export const action = async ({ request }) => {
        return Response.json({ error: "Invalid data" }, { headers: corsHeaders, status: 400 });
     }
 
+    // Sanitize phone numbers in data
+    Object.keys(data).forEach(key => {
+      if ((key.toLowerCase().includes('phone') || key.toLowerCase().includes('mobile')) && typeof data[key] === 'string') {
+        data[key] = data[key].replace(/-/g, "");
+      }
+    });
+
     await db.formSubmission.create({
       data: {
         formId: parseInt(formId),

@@ -64,7 +64,7 @@ export const action = async ({ request }) => {
     return { status: "success" };
   }
 
-  if (intent === "reject") {
+  if (intent === "reject" || intent === "approve") {
     if (!submissionId) return { status: "error", message: "Submission ID required" };
 
     const submission = await db.formSubmission.findUnique({
@@ -83,14 +83,15 @@ export const action = async ({ request }) => {
     const email = emailKey ? data[emailKey] : null;
     const firstName = firstNameKey ? data[firstNameKey] : (nameKey ? data[nameKey] : "");
     const lastName = lastNameKey ? data[lastNameKey] : "";
-    const phone = phoneKey ? data[phoneKey] : null;
+    const phone = phoneKey && data[phoneKey] ? data[phoneKey].replace(/-/g, "") : null;
 
     if (!email) {
       return { status: "error", message: "Could not find an email address in the submission data." };
     }
 
+    // Check if customer exists
+    let existingCustomer = null;
     try {
-      // Check if customer exists
       const customerQuery = await admin.graphql(
         `#graphql
          query getCustomer($query: String!) {
@@ -109,254 +110,120 @@ export const action = async ({ request }) => {
         { variables: { query: `email:${email}` } }
       );
       const customerJson = await customerQuery.json();
-      const existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
+      existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
+    } catch (error) {
+      console.error("Failed to query customer:", error);
+      return { status: "error", message: "Failed to check customer existence." };
+    }
 
-      if (existingCustomer) {
-        // Customer exists - remove B2B_approved if present and add B2B_rejected
-        let currentTags = existingCustomer.tags || [];
-        currentTags = currentTags.filter(tag => tag !== "B2B_approved");
-        if (!currentTags.includes("B2B_rejected")) {
-          currentTags.push("B2B_rejected");
-        }
+    if (existingCustomer) {
+      // 1. Calculate Tags (Approve/Reject Status)
+      let tags = existingCustomer.tags || [];
+      const tagToRemove = intent === "approve" ? "B2B_rejected" : "B2B_approved";
+      const tagToAdd = intent === "approve" ? "B2B_approved" : "B2B_rejected";
 
-        // Prepare customer input with updated details if different
-        const customerInput = {
-          id: existingCustomer.id,
-          tags: currentTags
-        };
+      tags = tags.filter(tag => tag !== tagToRemove);
+      if (!tags.includes(tagToAdd)) tags.push(tagToAdd);
 
-        // Update firstName if different
-        if (firstName && firstName !== existingCustomer.firstName) {
-          customerInput.firstName = firstName;
-        }
+      // 2. Primary Update: Tags + Name
+      const customerInput = {
+        id: existingCustomer.id,
+        tags: tags
+      };
+      if (firstName) customerInput.firstName = firstName;
+      if (lastName) customerInput.lastName = lastName;
 
-        // Update lastName if different
-        if (lastName && lastName !== existingCustomer.lastName) {
-          customerInput.lastName = lastName;
-        }
-
-        // Update phone if different
-        if (phone && phone !== existingCustomer.phone) {
-          customerInput.phone = phone;
-        }
-
-        const updateResponse = await admin.graphql(
+      try {
+        await admin.graphql(
           `#graphql
           mutation updateCustomer($input: CustomerInput!) {
             customerUpdate(input: $input) {
-              userErrors {
-                field
-                message
-              }
+              userErrors { message }
             }
           }`,
           { variables: { input: customerInput } }
         );
-        const updateJson = await updateResponse.json();
-        if (updateJson.data?.customerUpdate?.userErrors?.length > 0) {
-          return { status: "error", message: "Failed to update tags: " + updateJson.data.customerUpdate.userErrors[0].message };
-        }
-      } else {
-        // Customer doesn't exist - create with B2B_rejected tag
-        const createResponse = await admin.graphql(
-          `#graphql
-          mutation customerCreate($input: CustomerInput!) {
-            customerCreate(input: $input) {
-              customer {
-                id
-                email
-              }
-              userErrors {
-                field
-                message
-              }
-            }
-          }`,
-          {
-            variables: {
-              input: {
-                email: email,
-                firstName: firstName,
-                lastName: lastName,
-                phone: phone,
-                tags: ["B2B_rejected"]
-              }
-            }
-          }
-        );
-        const createJson = await createResponse.json();
-        if (createJson.data?.customerCreate?.userErrors?.length > 0) {
-          return { status: "error", message: "Failed to create customer: " + createJson.data.customerCreate.userErrors[0].message };
-        }
+      } catch (error) {
+         return { status: "error", message: "Error updating customer status." };
       }
-    } catch (error) {
-      console.error("Customer Access Error (Reject):", error);
-      return {
-        status: "error",
-        message: `Error: ${error.message || JSON.stringify(error)}`
-      };
-    }
 
-    await db.formSubmission.update({
-      where: { id: parseInt(submissionId) },
-      data: { status: "REJECTED" }
-    });
-
-    return { status: "success", message: "Submission rejected" };
-  }
-
-  if (intent === "approve") {
-    const submission = await db.formSubmission.findUnique({
-      where: { id: parseInt(submissionId) }
-    });
-    const data = JSON.parse(submission.data);
-
-    // Find email and name case-insensitively
-    const keys = Object.keys(data);
-    const emailKey = keys.find(k => k.toLowerCase().includes("email"));
-    const firstNameKey = keys.find(k => k.toLowerCase().includes("first"));
-    const lastNameKey = keys.find(k => k.toLowerCase().includes("last"));
-    const nameKey = keys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("name"));
-
-    const email = emailKey ? data[emailKey] : null;
-    const firstName = firstNameKey ? data[firstNameKey] : (nameKey ? data[nameKey] : "");
-    const lastName = lastNameKey ? data[lastNameKey] : "";
-    const phoneKey = keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile"));
-    const phone = phoneKey ? data[phoneKey] : null;
-
-    if (!email) {
-      return { status: "error", message: "Could not find an email address in the submission data." };
-    }
-
-    // Create Customer in Shopify
-    let response;
-    try {
-      response = await admin.graphql(
-        `#graphql
-            mutation customerCreate($input: CustomerInput!) {
-                customerCreate(input: $input) {
-                    customer {
-                        id
-                        email
-                    }
-                    userErrors {
-                        field
-                        message
-                    }
-                }
-            }`,
-        {
-          variables: {
-            input: {
-              email: email,
-              firstName: firstName,
-              lastName: lastName,
-              phone: phone,
-              tags: ["B2B_approved"]
-            }
-          }
-        }
-      );
-    } catch (error) {
-      console.error("Customer Access Error:", error);
-      return {
-        status: "error",
-        message: `Error: ${error.message || JSON.stringify(error)}`
-      };
-    }
-
-    const responseJson = await response.json();
-    const userErrors = responseJson.data?.customerCreate?.userErrors;
-
-    if (userErrors && userErrors.length > 0) {
-      if (userErrors[0].message.includes("taken")) {
-        try {
-          const customerQuery = await admin.graphql(
-            `#graphql
-               query getCustomer($query: String!) {
-                 customers(first: 1, query: $query) {
-                   edges {
-                      node {
-                        id
-                        tags
-                        firstName
-                        lastName
-                        phone
-                      }
-                   }
-                 }
-               }`,
-            { variables: { query: `email:${email}` } }
-          );
-          const customerJson = await customerQuery.json();
-          const existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
-
-          if (existingCustomer) {
-            let currentTags = existingCustomer.tags || [];
-            // Remove B2B_rejected if present
-            currentTags = currentTags.filter(tag => tag !== "B2B_rejected");
-            if (!currentTags.includes("B2B_approved")) {
-              currentTags.push("B2B_approved");
-            }
-
-            // Prepare customer input with updated details if different
-            const customerInput = {
-              id: existingCustomer.id,
-              tags: currentTags
-            };
-
-            // Update firstName if different
-            if (firstName && firstName !== existingCustomer.firstName) {
-              customerInput.firstName = firstName;
-            }
-
-            // Update lastName if different
-            if (lastName && lastName !== existingCustomer.lastName) {
-              customerInput.lastName = lastName;
-            }
-
-            // Update phone if different
-            if (phone && phone !== existingCustomer.phone) {
-              customerInput.phone = phone;
-            }
-
-            const updateResponse = await admin.graphql(
+      // 3. Secondary Update: Phone (Fail-safe)
+      if (phone) {
+          try {
+             await admin.graphql(
               `#graphql
-                  mutation updateCustomer($input: CustomerInput!) {
-                    customerUpdate(input: $input) {
-                      userErrors {
-                        field
-                        message
-                      }
-                    }
-                  }`,
-              { variables: { input: customerInput } }
+              mutation updateCustomer($input: CustomerInput!) {
+                customerUpdate(input: $input) {
+                  userErrors { message }
+                }
+              }`,
+              { variables: { input: { id: existingCustomer.id, phone: phone } } }
             );
-            const updateJson = await updateResponse.json();
-            if (updateJson.data?.customerUpdate?.userErrors?.length > 0) {
-              return { status: "error", message: "Failed to update tags: " + updateJson.data.customerUpdate.userErrors[0].message };
-            }
-          } else {
-            return { status: "error", message: "Email taken but could not find existing customer." };
+          } catch (e) {
+             // Ignore phone errors (e.g. taken/invalid)
+             console.log("Failed to update phone (ignoring):", e);
           }
-        } catch (error) {
-          console.error("Customer Access Error (Upsert):", error);
-          return {
-            status: "error",
-            message: `Error: ${error.message || JSON.stringify(error)}`
-          };
-        }
-      } else {
-        return { status: "error", message: "Shopify Error: " + userErrors[0].message };
+      }
+
+    } else {
+      // Customer doesn't exist - Create new
+      const tagToAdd = intent === "approve" ? "B2B_approved" : "B2B_rejected";
+      
+      const createInput = {
+        email: email,
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
+        tags: [tagToAdd]
+      };
+
+      const createResponse = await admin.graphql(
+        `#graphql
+        mutation customerCreate($input: CustomerInput!) {
+          customerCreate(input: $input) {
+            customer { id }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { input: createInput } }
+      );
+      
+      const createJson = await createResponse.json();
+      
+      if (createJson.data?.customerCreate?.userErrors?.length > 0) {
+          const errors = createJson.data.customerCreate.userErrors;
+          const hasPhoneError = errors.some(e => e.field && e.field.includes('phone'));
+
+          if (hasPhoneError) {
+              // Retry without phone
+              const inputNoPhone = { ...createInput };
+              delete inputNoPhone.phone;
+
+               const retryResponse = await admin.graphql(
+                `#graphql
+                mutation customerCreate($input: CustomerInput!) {
+                  customerCreate(input: $input) {
+                    userErrors { message }
+                  }
+                }`,
+                { variables: { input: inputNoPhone } }
+              );
+              const retryJson = await retryResponse.json();
+              if (retryJson.data?.customerCreate?.userErrors?.length > 0) {
+                   return { status: "error", message: "Failed to create customer (retry): " + retryJson.data.customerCreate.userErrors[0].message };
+              }
+          } else {
+               return { status: "error", message: "Failed to create customer: " + errors[0].message };
+          }
       }
     }
 
     await db.formSubmission.update({
       where: { id: parseInt(submissionId) },
-      data: { status: "APPROVED" }
+      data: { status: intent === "approve" ? "APPROVED" : "REJECTED" }
     });
 
-    return { status: "success", message: "Submission approved." };
+    return { status: "success", message: `Submission ${intent}ed.` };
   }
 
   return { status: "ignored" };
@@ -595,7 +462,9 @@ export default function Forms() {
                                             );
                                           })()
                                         ) : JSON.stringify(v)
-                                      ) : v}
+                                      ) : (
+                                        typeof v === 'string' && (k.toLowerCase().includes('phone') || k.toLowerCase().includes('mobile')) ? v.replace(/-/g, "") : v
+                                      )}
                                     </div>
                                   ))}
                                 </div>
