@@ -5,148 +5,323 @@ import ExcelJS from "exceljs";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { ProgressBar } from "@shopify/polaris";
 
+export const loader = async ({ request }) => {
+    const { admin } = await authenticate.admin(request);
+    const url = new URL(request.url);
+    const checkStatus = url.searchParams.get("checkStatus");
+    const operationId = url.searchParams.get("operationId");
+
+    if (checkStatus === "true" && operationId) {
+        const response = await admin.graphql(
+            `#graphql
+            query($id: ID!) {
+                node(id: $id) {
+                    ... on BulkOperation {
+                        id
+                        status
+                        objectCount
+                        url
+                    }
+                }
+            }`,
+            { variables: { id: operationId } }
+        );
+
+        const data = await response.json();
+        const bulkOperation = data.data?.node;
+
+        if (!bulkOperation) {
+            return { success: false, status: "NONE", operationId };
+        }
+
+        // Return the status and URL (if complete) to the client
+        // The client will handle the heavy lifting (download & parse)
+        if (bulkOperation.status === "COMPLETED") {
+             if (!bulkOperation.url) {
+                 return { success: false, status: "FAILED", error: "No URL in completed bulk operation", operationId };
+             }
+             return { success: true, status: "COMPLETED", url: bulkOperation.url, operationId };
+        } else if (bulkOperation.status === "RUNNING" || bulkOperation.status === "CREATED") {
+            return { success: true, status: "RUNNING", progress: bulkOperation.objectCount, operationId };
+        } else {
+             return { success: false, status: bulkOperation.status, operationId };
+        }
+    }
+
+    return { success: true };
+};
 
 export const action = async ({ request }) => {
     const { admin } = await authenticate.admin(request);
 
+    // 1. Cancel existing operation if any
+    const currentOpResponse = await admin.graphql(
+        `#graphql
+        query {
+            currentBulkOperation {
+                id
+                status
+            }
+        }`
+    );
+    const currentOpData = await currentOpResponse.json();
+    const currentOp = currentOpData.data?.currentBulkOperation;
+
+    if (currentOp && currentOp.status !== "COMPLETED") {
+         await admin.graphql(
+            `#graphql
+            mutation {
+                bulkOperationCancel(id: "${currentOp.id}") {
+                    bulkOperation { status }
+                    userErrors { field message }
+                }
+            }`
+        );
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // 2. Run new operation
     const response = await admin.graphql(
         `#graphql
-    query getProducts {
-      products(first: 50) {
-        edges {
-          node {
-            variants(first: 10) {
-              edges {
-                node {
-                  sku
-                  price
-                  compareAtPrice
-                  metafield(namespace: "app", key: "original_price") {
-                    value
-                  }
+        mutation {
+            bulkOperationRunQuery(
+            query: """
+                {
+                    products {
+                        edges {
+                            node {
+                                id
+                                title
+                                variants {
+                                    edges {
+                                        node {
+                                            id
+                                            sku
+                                            selectedOptions {
+                                                name
+                                                value
+                                            }
+                                            price
+                                            compareAtPrice
+                                            metafield(namespace: "app", key: "original_price") {
+                                                value
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-              }
+            """
+            ) {
+                bulkOperation {
+                    id
+                    status
+                }
+                userErrors {
+                    field
+                    message
+                }
             }
-          }
-        }
-      }
-    }`
+        }`
     );
 
-    const responseJson = await response.json();
+    const result = await response.json();
 
-    if (responseJson.errors) {
-        return { success: false, error: "GraphQL errors occurred" };
+    if (result.data?.bulkOperationRunQuery?.userErrors?.length > 0) {
+        return { success: false, error: result.data.bulkOperationRunQuery.userErrors[0].message };
     }
 
-    const products = responseJson.data?.products?.edges || [];
-
-    const rows = [];
-    products.forEach((productEdge) => {
-        const product = productEdge.node;
-
-        product.variants.edges.forEach((variantEdge) => {
-            const variant = variantEdge.node;
-            const b2bPrice = variant.metafield?.value ? parseFloat(variant.metafield.value).toFixed(2) : "";
-            rows.push({
-                "SKU": variant.sku || "",
-                "Price": variant.price || "",
-                "CompareAt Price": variant.compareAtPrice || "",
-                "B2B Price": b2bPrice
-            });
-        });
-    });
-
-    if (rows.length === 0) {
-        rows.push({
-            "SKU": "",
-            "Price": "",
-            "CompareAt Price": ""
-        });
-    }
-
-    return { success: true, rows };
+    return { 
+        success: true, 
+        status: "CREATED", 
+        operationId: result.data.bulkOperationRunQuery.bulkOperation.id 
+    };
 };
 
 export default function ExportProductData() {
     const shopify = useAppBridge();
     const fetcher = useFetcher();
+    const pollFetcher = useFetcher();
+
     const [progress, setProgress] = useState(0);
     const [isProgressVisible, setIsProgressVisible] = useState(false);
+    const [currentExportOpId, setCurrentExportOpId] = useState(null);
+    const [statusMessage, setStatusMessage] = useState("");
 
-    const isLoading = fetcher.state === "submitting" || fetcher.state === "loading";
-
-    useEffect(() => {
-        if (isLoading) {
-            setIsProgressVisible(true);
-            setProgress(0);
-
-            const estimatedTimeMs = 3000;
-            const intervalMs = 100;
-
-            const totalSteps = estimatedTimeMs / intervalMs;
-            const linearIncrement = 90 / totalSteps;
-
-            const interval = setInterval(() => {
-                setProgress((prev) => {
-                    if (prev < 90) {
-                        return Math.min(prev + linearIncrement, 90);
-                    } else {
-                        const target = 99;
-                        const remaining = target - prev;
-                        return prev + Math.max(remaining * 0.01, 0.01);
-                    }
-                });
-            }, intervalMs);
-            return () => clearInterval(interval);
-        } else if (isProgressVisible && !isLoading) {
-            setProgress(100);
-        }
-    }, [isLoading, isProgressVisible]);
-
-    useEffect(() => {
-        if (!isLoading && fetcher.data?.success && isProgressVisible) {
-            const timeout = setTimeout(() => {
-                setIsProgressVisible(false);
-            }, 300);
-            return () => clearTimeout(timeout);
-        }
-    }, [isLoading, fetcher.data?.success, isProgressVisible]);
+    const isLoading = fetcher.state === "submitting" || fetcher.state === "loading" || !!currentExportOpId;
 
     const handleExport = () => {
-        shopify.toast.show("Exporting products...");
-        fetcher.submit(
-            {},
-            { method: "POST" }
-        );
+        setProgress(0);
+        setStatusMessage("Starting export...");
+        setIsProgressVisible(true);
+        fetcher.submit({}, { method: "POST" });
     };
 
+    // Detect Start
     useEffect(() => {
-        if (fetcher.data?.success && fetcher.state === "idle") {
+        if (fetcher.data?.success && fetcher.data?.status === "CREATED") {
+            const opId = fetcher.data.operationId;
+            setCurrentExportOpId(opId);
+            setStatusMessage("Processing export...");
+            shopify.toast.show("Export started...", { duration: 5000 });
+            pollFetcher.load(`/app/export-product-prices?checkStatus=true&operationId=${opId}`);
+        } else if (fetcher.data?.error) {
+            shopify.toast.show(fetcher.data.error, { duration: 5000 });
+            setIsProgressVisible(false);
+        }
+    }, [fetcher.data]);
+
+    // Polling Logic
+    useEffect(() => {
+        if (currentExportOpId && pollFetcher.data) {
+            const data = pollFetcher.data;
+            if (data.operationId !== currentExportOpId) return;
+
+            if (data.status === "RUNNING" || data.status === "CREATED") {
+                const timer = setTimeout(() => {
+                    pollFetcher.load(`/app/export-product-prices?checkStatus=true&operationId=${currentExportOpId}`);
+                }, 2000);
+                return () => clearTimeout(timer);
+
+            } else if (data.status === "COMPLETED") {
+                // Now processing on CLIENT SIDE
+                setStatusMessage("Downloading & processing file...");
+                setProgress(90);
+
+                // Fetch the file directly from the URL provided by loader
+                if (data.url) {
+                    processExportFile(data.url);
+                } else {
+                    failExport("No file URL returned");
+                }
+                
+            } else if (data.status === "FAILED" || data.status === "NONE") {
+                failExport(data.error || "Unknown error");
+            }
+        }
+    }, [pollFetcher.data, currentExportOpId]);
+
+    const failExport = (reason) => {
+        setCurrentExportOpId(null);
+        setIsProgressVisible(false);
+        shopify.toast.show("Export failed: " + reason, { duration: 5000 });
+    };
+
+    const processExportFile = async (url) => {
+        try {
+            // Client-side fetch
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("Failed to download file");
+            
+            const text = await response.text();
+            const lines = text.split("\n").filter(line => line.trim() !== "");
+
+            const productsMap = new Map();
+            const rows = [];
+
+            setStatusMessage("Generating Excel...");
+
+            // Parse JSONL
+            lines.forEach(line => {
+                try {
+                    const obj = JSON.parse(line);
+                    
+                    if (obj.id && obj.id.includes("Product") && !obj.sku) {
+                        productsMap.set(obj.id, { title: obj.title });
+                    } else if (obj.id && obj.id.includes("ProductVariant")) {
+                        const parentId = obj.__parentId;
+                        const product = productsMap.get(parentId);
+                        
+                        const options = {
+                            "Option1 Value": "",
+                            "Option2 Value": "",
+                            "Option3 Value": ""
+                        };
+                        
+                        if (obj.selectedOptions) {
+                            obj.selectedOptions.forEach((opt, index) => {
+                                if (index < 3) {
+                                    options[`Option${index + 1} Value`] = opt.value;
+                                }
+                            });
+                        }
+                        
+                        const b2bPrice = obj.metafield?.value ? parseFloat(obj.metafield.value).toFixed(2) : "";
+
+                        rows.push({
+                            "Product Title": product?.title || "Unknown",
+                            "SKU": obj.sku || "",
+                            "Option1 Value": options["Option1 Value"],
+                            "Option2 Value": options["Option2 Value"],
+                            "Option3 Value": options["Option3 Value"],
+                            "Price": obj.price || "",
+                            "CompareAt Price": obj.compareAtPrice || "",
+                            "B2B Price": b2bPrice
+                        });
+                    }
+                } catch (e) {
+                     console.error("Error parsing line", e);
+                }
+            });
+
+            if (rows.length === 0) {
+                 rows.push({
+                    "Product Title": "No data found",
+                    "SKU": "",
+                    "Option1 Value": "",
+                    "Option2 Value": "",
+                    "Option3 Value": "",
+                    "Price": "",
+                    "CompareAt Price": "",
+                    "B2B Price": ""
+                 });
+            }
+
+            // Generate Excel
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet("Products");
 
-            worksheet.addRow(Object.keys(fetcher.data.rows[0] || {}));
+            if (rows.length > 0) {
+                worksheet.addRow(Object.keys(rows[0]));
+                rows.forEach(row => worksheet.addRow(Object.values(row)));
+            }
 
-            fetcher.data.rows.forEach(row => worksheet.addRow(Object.values(row)));
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            const blobUrl = URL.createObjectURL(blob);
+            
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = "product_prices_export.xlsx";
+            a.click();
+            URL.revokeObjectURL(blobUrl);
 
-            workbook.xlsx.writeBuffer().then(buffer => {
-                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "products_export.xlsx";
-                a.click();
-                URL.revokeObjectURL(url);
-                shopify.toast.show("Export complete");
-            }).catch(err => {
-                console.error(err);
-                shopify.toast.show("Export failed");
-            });
-        } else if (fetcher.data?.error) {
-            shopify.toast.show("Export failed");
+            setCurrentExportOpId(null);
+            setProgress(100);
+            shopify.toast.show("Export complete", { duration: 5000 });
+            setTimeout(() => setIsProgressVisible(false), 1000);
+
+        } catch (error) {
+            console.error(error);
+            failExport("Error processing file in browser");
         }
-    }, [fetcher.data, fetcher.state, shopify]);
+    };
+
+    // Fake Progress
+    useEffect(() => {
+        if (isProgressVisible && currentExportOpId) {
+             const interval = setInterval(() => {
+                setProgress((prev) => {
+                    if (prev < 80) return prev + 1; 
+                    return prev; 
+                });
+            }, 500);
+            return () => clearInterval(interval);
+        }
+    }, [isProgressVisible, currentExportOpId]);
+
 
     return (
         <s-page heading="Export Product Inventory Data">
@@ -179,10 +354,9 @@ export default function ExportProductData() {
                     <div style={{ width: '100%' }}>
                         <ProgressBar progress={progress} size="small" />
                     </div>
-                    <s-text variant="bodyLg">Exporting product prices...</s-text>
-                    <s-div className="ProcessMain">
-                        <s-text className="ProcessInner"></s-text>
-                    </s-div>
+                    <s-text variant="bodyLg">
+                         {statusMessage || "Processing..."}
+                    </s-text>
                 </div>
             )}
         </s-page>
