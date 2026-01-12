@@ -4,6 +4,30 @@ import { EmptyState, Pagination } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { COUNTRY_CODES } from "../country_codes";
+
+const formatPhoneNumber = (rawPhone) => {
+  if (!rawPhone) return null;
+
+  let cleanPhone = rawPhone.replace(/[^0-9+]/g, "");
+
+  if (cleanPhone.startsWith("+")) {
+      const sortedCodes = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
+      
+      const matchedMeta = sortedCodes.find(c => cleanPhone.startsWith(c.code));
+      
+      if (matchedMeta) {
+          const prefix = matchedMeta.code;
+          const numberPart = cleanPhone.substring(prefix.length);
+
+          if (numberPart.startsWith("0")) {
+              cleanPhone = prefix + numberPart.substring(1);
+          }
+      }
+  }
+
+  return cleanPhone;
+};
 
 export const loader = async ({ request }) => {
   try {
@@ -72,7 +96,7 @@ export const loader = async ({ request }) => {
       };
 
     } catch (dbError) {
-      console.error("Failed to fetch recent submissions:", dbError);
+      console.log("Failed to fetch recent submissions:", dbError);
     }
 
     const totalSubmissionsCount = await db.formSubmission.count({
@@ -85,8 +109,7 @@ export const loader = async ({ request }) => {
 
     return { forms, recentSubmissions, pagination, activeTab: tab, totalSubmissionsCount };
   } catch (error) {
-    console.error("Dashboard Loader Error:", error);
-    throw error; // Let the ErrorBoundary handle the main crash
+    throw error;
   }
 };
 
@@ -99,7 +122,6 @@ export const action = async ({ request }) => {
 
   if (intent === "delete" && formId) {
     const pId = parseInt(formId);
-    // Delete related submissions first to avoid FK violation
     await db.formSubmission.deleteMany({
       where: { formId: pId },
     });
@@ -121,7 +143,6 @@ export const action = async ({ request }) => {
     });
     const data = JSON.parse(submission.data);
 
-    // Find email
     const keys = Object.keys(data);
     const emailKey = keys.find(k => k.toLowerCase().includes("email"));
     const firstNameKey = keys.find(k => k.toLowerCase().includes("first"));
@@ -132,14 +153,15 @@ export const action = async ({ request }) => {
     const email = emailKey ? data[emailKey] : null;
     const firstName = firstNameKey ? data[firstNameKey] : (nameKey ? data[nameKey] : "");
     const lastName = lastNameKey ? data[lastNameKey] : "";
-    const phone = phoneKey && data[phoneKey] ? data[phoneKey].replace(/-/g, "") : null;
+    const phone = phoneKey && data[phoneKey] ? formatPhoneNumber(data[phoneKey]) : null;
 
     if (!email) {
       return { status: "error", message: "Could not find an email address in the submission data." };
     }
 
-    // Check if customer exists
+
     let existingCustomer = null;
+
     try {
       const customerQuery = await admin.graphql(
         `#graphql
@@ -161,12 +183,10 @@ export const action = async ({ request }) => {
       const customerJson = await customerQuery.json();
       existingCustomer = customerJson.data?.customers?.edges?.[0]?.node;
     } catch (error) {
-      console.error("Failed to query customer:", error);
       return { status: "error", message: "Failed to check customer existence." };
     }
 
     if (existingCustomer) {
-      // 1. Calculate Tags (Approve/Reject Status)
       let tags = existingCustomer.tags || [];
       const tagToRemove = intent === "approve" ? "B2B_rejected" : "B2B_approved";
       const tagToAdd = intent === "approve" ? "B2B_approved" : "B2B_rejected";
@@ -174,7 +194,7 @@ export const action = async ({ request }) => {
       tags = tags.filter(tag => tag !== tagToRemove);
       if (!tags.includes(tagToAdd)) tags.push(tagToAdd);
 
-      // 2. Primary Update: Tags + Name
+
       const customerInput = {
         id: existingCustomer.id,
         tags: tags
@@ -196,10 +216,9 @@ export const action = async ({ request }) => {
          return { status: "error", message: "Error updating customer status." };
       }
 
-      // 3. Secondary Update: Phone (Fail-safe)
       if (phone) {
           try {
-             await admin.graphql(
+              await admin.graphql(
               `#graphql
               mutation updateCustomer($input: CustomerInput!) {
                 customerUpdate(input: $input) {
@@ -209,13 +228,11 @@ export const action = async ({ request }) => {
               { variables: { input: { id: existingCustomer.id, phone: phone } } }
             );
           } catch (e) {
-             // Ignore phone errors (e.g. taken/invalid)
-             console.log("Failed to update phone (ignoring):", e);
+             console.log("Failed to update phone (system error):", e);
           }
       }
 
     } else {
-      // Customer doesn't exist - Create new
       const tagToAdd = intent === "approve" ? "B2B_approved" : "B2B_rejected";
       
       const createInput = {
@@ -244,7 +261,6 @@ export const action = async ({ request }) => {
           const hasPhoneError = errors.some(e => e.field && e.field.includes('phone'));
 
           if (hasPhoneError) {
-              // Retry without phone
               const inputNoPhone = { ...createInput };
               delete inputNoPhone.phone;
 
@@ -272,7 +288,8 @@ export const action = async ({ request }) => {
       data: { status: intent === "approve" ? "APPROVED" : "REJECTED" }
     });
 
-    return { status: "success", message: `Submission ${intent}ed.` };
+    const pastTense = intent === "approve" ? "approved" : "rejected";
+    return { status: "success", message: `Submission ${pastTense}.` };
   }
 
   return { status: "ignored" };
@@ -306,7 +323,6 @@ export default function Forms() {
     }
   }, [actionData]);
 
-  // Calculate pagination label
   const startItem = (pagination.currentPage - 1) * 10 + 1;
   const endItem = Math.min(startItem + recentSubmissions.length - 1, pagination.totalCount);
   const paginationLabel = pagination.totalCount > 0 
@@ -339,7 +355,6 @@ export default function Forms() {
     return new Date(dateStr).toLocaleString();
   };
 
-  // Helper to nicely format the JSON data
   const formatData = (jsonStr) => {
     try {
       const data = JSON.parse(jsonStr);
