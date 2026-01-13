@@ -6,52 +6,157 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { Pagination, ProgressBar } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
-    await authenticate.admin(request);
-    return null;
+    const { admin } = await authenticate.admin(request);
+    const url = new URL(request.url);
+    const checkStatus = url.searchParams.get("checkStatus");
+    const operationId = url.searchParams.get("operationId");
+
+    // --- POLLING LOGIC ---
+    if (checkStatus === "true" && operationId) {
+        const response = await admin.graphql(
+            `#graphql
+            query($id: ID!) {
+                node(id: $id) {
+                    ... on BulkOperation {
+                        id
+                        status
+                        objectCount
+                        url
+                    }
+                }
+            }`,
+            { variables: { id: operationId } }
+        );
+
+        const data = await response.json();
+        const bulkOperation = data.data?.node;
+
+        if (!bulkOperation) {
+            return { success: false, status: "NONE", operationId };
+        }
+
+        if (bulkOperation.status === "COMPLETED") {
+             // Check result file for userErrors
+             let bulkErrors = [];
+             let successCount = 0;
+             
+             if (bulkOperation.url) {
+                try {
+                    const fileResponse = await fetch(bulkOperation.url);
+                    const text = await fileResponse.text();
+                    const lines = text.split("\n").filter(line => line.trim() !== "");
+                    lines.forEach(line => {
+                        const result = JSON.parse(line);
+                        const userErrors = result.productVariantsBulkUpdate?.userErrors || [];
+                        if (userErrors.length > 0) {
+                             bulkErrors.push(userErrors[0].message);
+                        } else {
+                             // Count the actual variants updated (not products)
+                             const variantsUpdated = result.productVariantsBulkUpdate?.productVariants?.length || 0;
+                             successCount += variantsUpdated;
+                        }
+                    });
+                } catch (e) {
+                    console.error("Error parsing bulk result", e);
+                }
+             } else {
+                 successCount = parseInt(bulkOperation.objectCount) || 0;
+             }
+             return { success: true, status: "COMPLETED", bulkResults: { updated: successCount, errors: bulkErrors }, operationId };
+
+        } else if (bulkOperation.status === "RUNNING" || bulkOperation.status === "CREATED") {
+             return { success: true, status: "RUNNING", progress: bulkOperation.objectCount, operationId };
+        } else {
+             return { success: false, status: bulkOperation.status, operationId };
+        }
+    }
+
+    return { success: true };
 };
 
 export const action = async ({ request }) => {
     const { admin } = await authenticate.admin(request);
-
     const formData = await request.formData();
     const dataString = formData.get("data");
     const rows = JSON.parse(dataString);
 
     const results = {
         total: rows.length,
-        updated: 0,
+        updated: 0, 
         errors: [],
-        failedRows: []
+        failedRows: [],
+        skippedRows: [],
+        bulkOperationId: null
     };
 
+    // 1. PREFETCH ALL VARIANTS WITH PRICE DATA
+    let skuMap = new Map(); // SKU -> { id, productId, price, compareAtPrice, b2bPrice }
+    
+    let hasNextPage = true;
+    let endCursor = null;
+
+    console.log("Prefetching price data...");
+    while (hasNextPage) {
+        const query = `#graphql
+        query getPriceData($after: String) {
+            productVariants(first: 250, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                edges {
+                    node {
+                        id
+                        sku
+                        price
+                        compareAtPrice
+                        metafield(namespace: "app", key: "original_price") {
+                            value
+                        }
+                        product {
+                            id
+                        }
+                    }
+                }
+            }
+        }`;
+        
+        const res = await admin.graphql(query, { variables: { after: endCursor } });
+        const data = await res.json();
+        
+        data.data?.productVariants?.edges.forEach(edge => {
+            const node = edge.node;
+            if (node.sku) {
+                skuMap.set(node.sku.toLowerCase(), {
+                    id: node.id,
+                    productId: node.product.id,
+                    price: parseFloat(node.price),
+                    compareAtPrice: node.compareAtPrice ? parseFloat(node.compareAtPrice) : null,
+                    b2bPrice: node.metafield?.value ? parseFloat(node.metafield.value) : null
+                });
+            }
+        });
+        
+        hasNextPage = data.data?.productVariants?.pageInfo?.hasNextPage;
+        endCursor = data.data?.productVariants?.pageInfo?.endCursor;
+    }
+    console.log(`Prefetched ${skuMap.size} variants.`);
+
+    // 2. PROCESS ROWS (In-Memory Validation)
     const processedCombinations = new Set();
+    const bulkUpdates = []; // { productId, variantInput }
 
     for (const row of rows) {
         try {
-            // Flexible column matching (case-insensitive)
-            const keys = Object.keys(row);
-            const getCol = (name) => {
-                const key = keys.find(k => k.toLowerCase() === name.toLowerCase());
-                return key ? row[key] : undefined;
-            };
+            if (!row["SKU"] || row["SKU"] === "SKU") continue;
 
-            const skuRaw = getCol("SKU");
-            if (!skuRaw || String(skuRaw).trim().toUpperCase() === "SKU") {
-                continue;
-            }
-            const sku = String(skuRaw).trim();
+            const sku = String(row["SKU"]).trim();
+            const skuKey = sku.toLowerCase();
+            
+            const priceRaw = row["Price"];
+            const compareAtPriceRaw = row["CompareAt Price"];
+            const b2bPriceRaw = row["B2B Price"];
 
-            const priceRaw = getCol("Price");
-            const compareAtPriceRaw = getCol("CompareAt Price");
-            const b2bPriceRaw = getCol("B2B Price");
-
-            // Validate Price
+            // Parse Price
             let newPrice = null;
-            if (priceRaw === undefined || priceRaw === null || String(priceRaw).trim() === "") {
-                results.errors.push(`Skipped SKU ${sku}: Please enter price`);
-                results.failedRows.push({ ...row, "Error Reason": 'Please enter price' });
-                continue;
-            } else {
+            if (priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== "") {
                 const parsed = parseFloat(priceRaw);
                 if (isNaN(parsed)) {
                     results.errors.push(`Skipped SKU ${sku}: Invalid Price value '${priceRaw}'`);
@@ -61,175 +166,95 @@ export const action = async ({ request }) => {
                 newPrice = parsed;
             }
 
-            // Validate CompareAt Price
+            // Parse CompareAt Price
             let newCompareAtPrice = null;
             let shouldClearCompareAt = false;
-
-            // Check if column exists in the row data (case-insensitive)
-            const compareAtKey = keys.find(k => k.toLowerCase() === "compareat price");
-
-            if (compareAtKey) {
-                // Column exists
-                if (compareAtPriceRaw !== undefined && compareAtPriceRaw !== null && String(compareAtPriceRaw).trim() !== "") {
-                    // Has value
-                    const parsed = parseFloat(compareAtPriceRaw);
+            if (compareAtPriceRaw !== undefined && compareAtPriceRaw !== null) {
+                const trimmed = String(compareAtPriceRaw).trim();
+                if (trimmed === "") {
+                    shouldClearCompareAt = true;
+                } else {
+                    const parsed = parseFloat(trimmed);
                     if (isNaN(parsed)) {
                         results.errors.push(`Skipped SKU ${sku}: Invalid CompareAt Price value '${compareAtPriceRaw}'`);
                         results.failedRows.push({ ...row, "Error Reason": 'Invalid CompareAt Price value' });
                         continue;
                     }
                     newCompareAtPrice = parsed;
-                } else {
-                    // Column exists but value is empty -> Clear it
-                    shouldClearCompareAt = true;
                 }
             }
 
-            if (newPrice === null && newCompareAtPrice === null && !shouldClearCompareAt) {
-                // Both fields missing or empty (and no clear instruction) - count as treated/success
-                results.updated++;
-                continue;
+            // Parse B2B Price
+            let newB2BPrice = null;
+            if (b2bPriceRaw !== undefined && b2bPriceRaw !== null && String(b2bPriceRaw).trim() !== "") {
+                const parsed = parseFloat(b2bPriceRaw);
+                if (!isNaN(parsed)) {
+                    newB2BPrice = parsed;
+                }
             }
 
-            // Check for duplicates in this batch
-            if (processedCombinations.has(sku)) {
+            // Check for duplicates
+            if (processedCombinations.has(skuKey)) {
                 results.errors.push(`Skipped SKU ${sku}: Duplicate SKU in file`);
                 results.failedRows.push({ ...row, "Error Reason": 'Duplicate SKU in file' });
                 continue;
             }
-            processedCombinations.add(sku);
+            processedCombinations.add(skuKey);
 
-            // Find Variant by SKU
-            const variantQuery = await admin.graphql(
-                `#graphql
-                query findVariantBySKU($query: String!) {
-                    productVariants(first: 1, query: $query) {
-                        edges {
-                            node {
-                                id
-                                price
-                                compareAtPrice
-                                metafield(namespace: "app", key: "original_price") {
-                                    value
-                                }
-                                product {
-                                    id
-                                }
-                            }
-                        }
-                    }
-                }`,
-                {
-                    variables: {
-                        query: `sku:${sku}`
-                    }
-                }
-            );
-
-            const variantResult = await variantQuery.json();
-            const variant = variantResult.data?.productVariants?.edges[0]?.node;
-
-            if (!variant) {
+            // Lookup variant
+            const variantData = skuMap.get(skuKey);
+            
+            if (!variantData) {
                 results.errors.push(`Variant not found for SKU: ${sku}`);
                 results.failedRows.push({ ...row, "Error Reason": 'Variant not found' });
                 continue;
             }
 
-            // Prepare Mutation Input
-            const input = {
-                id: variant.id
+            // Build update input
+            const variantInput = {
+                id: variantData.id
             };
 
             let needsUpdate = false;
-            let skipReason = [];
 
             // Check Price
-            if (newPrice !== null) {
-                if (parseFloat(variant.price) !== newPrice) {
-                    input.price = String(newPrice);
-                    needsUpdate = true;
-                } else {
-                    skipReason.push("Price matches");
-                }
+            if (newPrice !== null && variantData.price !== newPrice) {
+                variantInput.price = String(newPrice);
+                needsUpdate = true;
             }
 
             // Check CompareAt Price
-            if (newCompareAtPrice !== null) {
-                // Has new valid value
-                const currentCompareAt = variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null;
-
-                if (currentCompareAt !== newCompareAtPrice) {
-                    input.compareAtPrice = String(newCompareAtPrice);
+            if (shouldClearCompareAt) {
+                if (variantData.compareAtPrice !== null) {
+                    variantInput.compareAtPrice = null;
                     needsUpdate = true;
-                } else {
-                    skipReason.push("CompareAt Price matches");
                 }
-            } else if (shouldClearCompareAt) {
-                // Instruction to clear
-                if (variant.compareAtPrice !== null) {
-                    input.compareAtPrice = null;
-                    needsUpdate = true;
-                } else {
-                    skipReason.push("CompareAt Price already empty");
-                }
+            } else if (newCompareAtPrice !== null && variantData.compareAtPrice !== newCompareAtPrice) {
+                variantInput.compareAtPrice = String(newCompareAtPrice);
+                needsUpdate = true;
             }
 
             // Check B2B Price
-            if (b2bPriceRaw !== undefined && b2bPriceRaw !== null && String(b2bPriceRaw).trim() !== "") {
-                const parsed = parseFloat(b2bPriceRaw);
-                if (!isNaN(parsed)) {
-                     const currentB2BPrice = variant.metafield?.value ? parseFloat(variant.metafield.value) : null;
-                     if (currentB2BPrice !== parsed) {
-                        input.metafields = [{
-                            namespace: "app",
-                            key: "original_price",
-                            value: String(parsed),
-                            type: "number_decimal"
-                        }];
-                        needsUpdate = true;
-                     }
-                }
+            if (newB2BPrice !== null && variantData.b2bPrice !== newB2BPrice) {
+                variantInput.metafields = [{
+                    namespace: "app",
+                    key: "original_price",
+                    value: String(newB2BPrice),
+                    type: "number_decimal"
+                }];
+                needsUpdate = true;
             }
 
             if (!needsUpdate) {
-                // If data matches, count as success (updated) but don't call mutation
-                results.updated++;
+                results.skippedRows.push({ ...row, "Reason": 'Prices already match' });
                 continue;
             }
 
-            // Execute Update
-            const updateMutation = await admin.graphql(
-                `#graphql
-                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                        productVariants {
-                            id
-                            price
-                            compareAtPrice
-                        }
-                        userErrors {
-                            field
-                            message
-                        }
-                    }
-                }`,
-                {
-                    variables: {
-                        productId: variant.product.id,
-                        variants: [input]
-                    }
-                }
-            );
-
-            const updateResult = await updateMutation.json();
-
-            if (updateResult.data?.productVariantsBulkUpdate?.userErrors?.length > 0) {
-                const errorMsg = updateResult.data.productVariantsBulkUpdate.userErrors[0].message;
-                results.errors.push(`Error updating SKU ${sku}: ${errorMsg}`);
-                results.failedRows.push({ ...row, "Error Reason": errorMsg });
-            } else {
-                results.updated++;
-            }
+            // Valid Update! Add to queue.
+            bulkUpdates.push({
+                productId: variantData.productId,
+                variantInput: variantInput
+            });
 
         } catch (error) {
             results.errors.push(`Error processing SKU ${row["SKU"]}: ${error.message}`);
@@ -237,159 +262,254 @@ export const action = async ({ request }) => {
         }
     }
 
+    console.log(`Validation complete. Bulk Updates Queue: ${bulkUpdates.length}`);
+
+    // 3. EXECUTE BULK UPDATES
+    if (bulkUpdates.length === 0) {
+        return { success: true, results };
+    }
+
+    // Group by Product ID
+    const productGroups = new Map();
+    bulkUpdates.forEach(update => {
+        if (!productGroups.has(update.productId)) {
+            productGroups.set(update.productId, []);
+        }
+        productGroups.get(update.productId).push(update.variantInput);
+    });
+
+    // Prepare JSONL
+    const jsonlLines = [];
+    for (const [productId, variants] of productGroups) {
+        jsonlLines.push(JSON.stringify({
+            productId: productId,
+            variants: variants
+        }));
+    }
+
+    const { stagedUploadsCreate, userErrors: stageErrors } = await (await admin.graphql(`#graphql
+    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+            stagedTargets { url resourceUrl parameters { name value } }
+            userErrors { field message }
+        }
+    }`, {
+        variables: {
+            input: [{
+                filename: "price_updates.jsonl",
+                mimeType: "text/jsonl",
+                httpMethod: "POST",
+                resource: "BULK_MUTATION_VARIABLES"
+            }]
+        }
+    })).json().then(r => r.data || {});
+
+    if (stageErrors?.length > 0 || stagedUploadsCreate?.userErrors?.length > 0) {
+        const msg = stageErrors?.[0]?.message || stagedUploadsCreate?.userErrors?.[0]?.message;
+        results.errors.push("Failed to create upload target: " + msg);
+        return { success: true, results };
+    }
+
+    const target = stagedUploadsCreate?.stagedTargets?.[0];
+    if (target) {
+        const formData = new FormData();
+        const keyParam = target.parameters.find(p => p.name === "key");
+        const uploadPath = keyParam?.value;
+
+        target.parameters.forEach(p => formData.append(p.name, p.value));
+        formData.append("file", new Blob([jsonlLines.join("\n")], { type: "text/jsonl" }));
+
+        const uploadRes = await fetch(target.url, { method: "POST", body: formData });
+        if (!uploadRes.ok) {
+             results.errors.push(`Upload failed: ${uploadRes.statusText}`);
+             return { success: true, results };
+        }
+
+        const bulkRes = await admin.graphql(`#graphql
+        mutation bulkOperationRunMutation($mutation: String!, $stagedUploadPath: String!) {
+            bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $stagedUploadPath) {
+                bulkOperation { id }
+                userErrors { field message }
+            }
+        }`, {
+            variables: {
+                mutation: `mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                        productVariants { id }
+                        userErrors { field message }
+                    }
+                }`,
+                stagedUploadPath: uploadPath
+            }
+        });
+        
+        const bulkData = await bulkRes.json();
+        if (bulkData.data?.bulkOperationRunMutation?.userErrors?.length > 0) {
+             results.errors.push("Bulk Mutation Error: " + bulkData.data.bulkOperationRunMutation.userErrors[0].message);
+        } else {
+             const opId = bulkData.data?.bulkOperationRunMutation?.bulkOperation?.id;
+             console.log("Bulk Op Started:", opId, "Upload Key:", uploadPath);
+             
+             if (opId) {
+                 results.bulkOperationId = opId;
+             } else {
+                 results.errors.push("Failed to trigger backend bulk operation (No ID returned)");
+             }
+        }
+    } else {
+        results.errors.push("Failed to get upload target URL");
+    }
+
     return { success: true, results };
 };
 
-export default function PriceUpdate() {
+export default function ImportProductPrices() {
     const shopify = useAppBridge();
     const fetcher = useFetcher();
+    const pollFetcher = useFetcher(); 
+    
     const [file, setFile] = useState(null);
     const [parsedData, setParsedData] = useState(null);
     const [progress, setProgress] = useState(0);
     const [isProgressVisible, setIsProgressVisible] = useState(false);
     const fileInputRef = useRef(null);
 
+    const [validatedResults, setValidatedResults] = useState(null);
+    const [finalResults, setFinalResults] = useState(null);
+
     const [failedPage, setFailedPage] = useState(1);
     const failedRowsPerPage = 10;
+    const [skippedPage, setSkippedPage] = useState(1);
+    const skippedRowsPerPage = 10;
 
     const isLoading = fetcher.state === "submitting" || fetcher.state === "loading";
-
-    useEffect(() => {
-        if (isLoading) {
-            setIsProgressVisible(true);
-            setProgress(0);
-
-            const rowCount = parsedData ? parsedData.length : 0;
-            const estimatedTimeMs = Math.max(rowCount * 500, 2000);
-            const intervalMs = 100;
-
-            const totalSteps = estimatedTimeMs / intervalMs;
-            const linearIncrement = 90 / totalSteps;
-
-            const interval = setInterval(() => {
-                setProgress((prev) => {
-                    if (prev < 90) {
-                        return Math.min(prev + linearIncrement, 90);
-                    } else {
-                        const target = 99;
-                        const remaining = target - prev;
-                        return prev + Math.max(remaining * 0.01, 0.01);
-                    }
-                });
-            }, intervalMs);
-            return () => clearInterval(interval);
-        } else if (isProgressVisible && !isLoading) {
-            setProgress(100);
-        }
-    }, [isLoading, isProgressVisible, parsedData]);
-
-    useEffect(() => {
-        if (!isLoading && fetcher.data?.results && isProgressVisible) {
-            const timeout = setTimeout(() => {
-                setIsProgressVisible(false);
-            }, 300);
-            return () => clearTimeout(timeout);
-        }
-    }, [isLoading, fetcher.data?.results, isProgressVisible]);
 
     const handleFileChange = (e) => {
         const selectedFile = e.target.files[0];
         if (selectedFile) {
             setFile(selectedFile);
             setFailedPage(1);
+            setSkippedPage(1);
+            setValidatedResults(null); 
+            setFinalResults(null);
+
+            e.target.value = ""; 
 
             const reader = new FileReader();
             reader.onload = async (event) => {
                 const buffer = event.target.result;
                 const workbook = new ExcelJS.Workbook();
                 await workbook.xlsx.load(buffer);
-
                 const worksheet = workbook.worksheets[0];
                 const jsonData = [];
-
                 const headers = [];
                 worksheet.getRow(1).eachCell((cell, colNumber) => {
-                    headers[colNumber] = cell.value;
+                   headers[colNumber] = cell.value ? String(cell.value).trim() : "";
                 });
-
-                // Validate mandatory headers
-                const headerValues = Object.values(headers).map(h => String(h).trim().toLowerCase());
-                const missingColumns = [];
-                if (!headerValues.includes("sku")) missingColumns.push("SKU");
-                if (!headerValues.includes("price")) missingColumns.push("Price");
-
-                if (missingColumns.length > 0) {
-                    const errorMsg = `Error: '${missingColumns.join("' and '")}' column${missingColumns.length > 1 ? "s are" : " is"} missing.`;
-                    shopify.toast.show(errorMsg, { isError: true });
-                    setFile(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                    return;
-                }
-
                 worksheet.eachRow((row, rowNumber) => {
                     if (rowNumber > 1) {
                         const rowData = {};
-                        // Iterate all headers to ensure we capture empty cells too
-                        headers.forEach((header, index) => {
-                            // Column indices are 1-based in ExcelJS, headers array is 0-based? 
-                            // Wait, earlier code: headers[colNumber] = cell.value. eachCell gives 1-based colNumber.
-                            // So headers array indices might be sparse or 1-based?
-                            // Let's check: headers starts empty. headers[colNumber] = ...
-                            // Yes, it's sparse array with 1-based indices.
-                            if (header) {
-                                const cellValue = row.getCell(index).value;
-                                rowData[header] = cellValue;
-                            }
+                        row.eachCell((cell, colNumber) => {
+                            if (headers[colNumber]) rowData[headers[colNumber]] = cell.value;
                         });
-
-                        // Check for SKU column (case-insensitive key match)
-                        const keys = Object.keys(rowData);
-                        const skuKey = keys.find(k => k.toLowerCase() === "sku");
-
-                        if (skuKey && rowData[skuKey] && String(rowData[skuKey]).trim() !== "") {
+                        if (rowData["SKU"] && String(rowData["SKU"]).trim() !== "") {
                             jsonData.push(rowData);
                         }
                     }
                 });
-
                 setParsedData(jsonData);
-                shopify.toast.show(`File loaded: ${jsonData.length} rows. Starting update...`);
-
-                fetcher.submit(
-                    {
-                        data: JSON.stringify(jsonData)
-                    },
-                    { method: "POST" }
-                );
+                shopify.toast.show(`File loaded: ${jsonData.length} rows. Starting import...`, { duration: 5000 });
+                setIsProgressVisible(true);
+                setProgress(10); 
+                fetcher.submit({ data: JSON.stringify(jsonData) }, { method: "POST" });
             };
             reader.readAsArrayBuffer(selectedFile);
         }
     };
 
     const handleButtonClick = () => {
-        if (fileInputRef.current) {
-            fileInputRef.current.click();
-        }
+        if (fileInputRef.current) fileInputRef.current.click();
     };
 
+    // --- HANDLE ACTION RESPONSE ---
     useEffect(() => {
         if (fetcher.data?.success && fetcher.state === "idle") {
-            const { results } = fetcher.data;
-            shopify.toast.show(`Update complete: ${results.updated} updated, ${results.errors.length} errors`);
-            setFile(null);
-            setParsedData(null);
-            if (fileInputRef.current) {
-                fileInputRef.current.value = "";
+            const res = fetcher.data.results;
+            setValidatedResults(res);
+
+            if (res.bulkOperationId) {
+                pollFetcher.load(`/app/import-product-prices?checkStatus=true&operationId=${res.bulkOperationId}`);
+            } else {
+                setFinalResults(res); 
+                setProgress(100);
+                setTimeout(() => setIsProgressVisible(false), 2000);
+                shopify.toast.show(`Import complete.`, { duration: 5000 });
             }
         }
-    }, [fetcher.data, fetcher.state, shopify]);
+    }, [fetcher.data, fetcher.state]);
+
+    // --- POLLING ---
+    useEffect(() => {
+        if (validatedResults?.bulkOperationId) {
+             const opId = validatedResults.bulkOperationId;
+             if (pollFetcher.data && pollFetcher.data.operationId) {
+                  if (pollFetcher.data.operationId !== opId) return;
+
+                  if (pollFetcher.data.status === "RUNNING" || pollFetcher.data.status === "CREATED") {
+                       const timer = setTimeout(() => {
+                           pollFetcher.load(`/app/import-product-prices?checkStatus=true&operationId=${opId}`);
+                       }, 2000);
+                       return () => clearTimeout(timer);
+                  } else if (pollFetcher.data.status === "COMPLETED") {
+                       const bulkRes = pollFetcher.data.bulkResults || { updated: 0, errors: [] };
+                       
+                       const merged = {
+                           ...validatedResults,
+                           updated: bulkRes.updated, 
+                           errors: [...validatedResults.errors, ...bulkRes.errors]
+                       };
+                       setFinalResults(merged);
+                       setProgress(100);
+                       shopify.toast.show(`Import complete. ${merged.updated} products updated.`, { duration: 5000 });
+                       setTimeout(() => setIsProgressVisible(false), 2000);
+                  } else if (pollFetcher.data.status === "FAILED") {
+                       shopify.toast.show("Background update failed.", { duration: 5000 });
+                       setIsProgressVisible(false);
+                  }
+             }
+        }
+    }, [pollFetcher.data, validatedResults]);
+
+    // --- PROGRESS UI ---
+    useEffect(() => {
+        if (isLoading) {
+             const interval = setInterval(() => {
+                setProgress((prev) => {
+                    if (prev < 30) return prev + 2;
+                    if (prev < 60) return prev + 0.5;
+                    if (prev < 90) return prev + 0.05;
+                    return prev;
+                });
+            }, 100);
+            return () => clearInterval(interval);
+        } else if (validatedResults?.bulkOperationId && !finalResults) {
+             const interval = setInterval(() => {
+                setProgress((prev) => {
+                     if (prev < 80) return prev + 1;
+                     if (prev < 95) return prev + 0.1; 
+                     return prev;
+                });
+            }, 500);
+            return () => clearInterval(interval);
+        }
+    }, [isLoading, validatedResults, finalResults]);
+
+    const displayResults = finalResults || validatedResults;
 
     return (
-        <s-page heading="Bulk Price Update">
+        <s-page heading="Import Product Prices">
             <s-box paddingBlockStart="large">
-                <s-section
-                    heading="Import an Excel file with SKU, Price, and CompareAt Price columns.">
-
+                <s-section heading="Upload an Excel file with SKU, Price, CompareAt Price, and B2B Price columns.">
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -401,7 +521,7 @@ export default function PriceUpdate() {
                     <s-button
                         variant="primary"
                         onClick={handleButtonClick}
-                        loading={isLoading ? "true" : undefined}
+                        loading={(isLoading || (validatedResults?.bulkOperationId && !finalResults)) ? "true" : undefined}
                         paddingBlock="large"
                     >
                         Import Product Prices
@@ -411,54 +531,45 @@ export default function PriceUpdate() {
 
             {isProgressVisible && (
                 <div style={{
-                    position: 'fixed',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    zIndex: 1000,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '16px',
-                    width: '300px'
+                    position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                    zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    gap: '16px', width: '300px'
                 }}>
-                    <div style={{ width: '100%' }}>
-                        <ProgressBar progress={Math.floor(progress)} size="small" />
-                    </div>
-                    <s-text variant="bodyLg">Updating product prices...</s-text>
-                    <s-div className="ProcessMain">
-                        <s-text className="ProcessInner"></s-text>
-                    </s-div>
+                    <ProgressBar progress={progress} size="small" />
+                    <s-text variant="bodyLg">
+                         {validatedResults?.bulkOperationId && !finalResults ? "Processing price updates..." : "Importing product prices..."}
+                    </s-text>
                 </div>
             )}
 
-            {!isLoading && fetcher.data?.results && !isProgressVisible && (
+            {displayResults && !isProgressVisible && (
                 <>
                     <s-box paddingBlockStart="large">
-                        <s-section heading="Update Results">
+                        <s-section heading="Import Results">
                             <s-stack gap="200" direction="block">
-                                <s-text as="p">Total rows: {fetcher.data.results.total}</s-text>
-                                <s-text as="p">Successfully updated: {fetcher.data.results.updated}</s-text>
-                                <s-text as="p">Errors: {fetcher.data.results.errors.length}</s-text>
+                                <s-text as="p">Total rows: {displayResults.total}</s-text>
+                                <s-text as="p">Successfully updated: {displayResults.updated}</s-text>
+                                <s-text as="p">Skipped: {displayResults.skippedRows?.length || 0}</s-text>
+                                <s-text as="p">Errors: {displayResults.errors.length}</s-text>
                             </s-stack>
                         </s-section>
                     </s-box>
 
-                    {fetcher.data.results.failedRows?.length > 0 && (
+                    {displayResults.failedRows?.length > 0 && (
                         <s-box paddingBlockStart="large">
-                            <s-section heading={`❌ Failed Rows (${fetcher.data.results.failedRows.length})`}>
+                            <s-section heading={`❌ Failed Rows (${displayResults.failedRows.length})`}>
                                 <s-table>
                                     <s-table-header-row>
-                                        {Object.keys(fetcher.data.results.failedRows[0] || {}).map((key) => (
+                                        {Object.keys(displayResults.failedRows[0] || {}).map((key) => (
                                             <s-table-header key={key}>{key}</s-table-header>
                                         ))}
                                     </s-table-header-row>
                                     <s-table-body>
-                                        {fetcher.data.results.failedRows
+                                        {displayResults.failedRows
                                             .slice((failedPage - 1) * failedRowsPerPage, failedPage * failedRowsPerPage)
                                             .map((row, index) => (
                                                 <s-table-row key={index}>
-                                                    {Object.keys(fetcher.data.results.failedRows[0] || {}).map((key, cellIndex) => (
+                                                    {Object.keys(displayResults.failedRows[0] || {}).map((key, cellIndex) => (
                                                         <s-table-cell key={cellIndex}>
                                                             {row[key]?.toString() || '-'}
                                                         </s-table-cell>
@@ -467,14 +578,51 @@ export default function PriceUpdate() {
                                             ))}
                                     </s-table-body>
                                 </s-table>
-                                {fetcher.data.results.failedRows.length > failedRowsPerPage && (
+                                {displayResults.failedRows.length > failedRowsPerPage && (
                                     <Pagination
                                         hasPrevious={failedPage > 1}
                                         onPrevious={() => setFailedPage(failedPage - 1)}
-                                        hasNext={failedPage < Math.ceil(fetcher.data.results.failedRows.length / failedRowsPerPage)}
+                                        hasNext={failedPage < Math.ceil(displayResults.failedRows.length / failedRowsPerPage)}
                                         onNext={() => setFailedPage(failedPage + 1)}
                                         type="table"
-                                        label={`${((failedPage - 1) * failedRowsPerPage) + 1}-${Math.min(failedPage * failedRowsPerPage, fetcher.data.results.failedRows.length)} of ${fetcher.data.results.failedRows.length}`}
+                                        label={`${((failedPage - 1) * failedRowsPerPage) + 1}-${Math.min(failedPage * failedRowsPerPage, displayResults.failedRows.length)} of ${displayResults.failedRows.length}`}
+                                    />
+                                )}
+                            </s-section>
+                        </s-box>
+                    )}
+
+                    {displayResults.skippedRows?.length > 0 && (
+                        <s-box paddingBlockStart="large" paddingBlockEnd="large">
+                            <s-section heading={`⏭️ Skipped Rows (${displayResults.skippedRows.length}) - Prices Already Match`}>
+                                <s-table>
+                                    <s-table-header-row>
+                                        {Object.keys(displayResults.skippedRows[0] || {}).map((key) => (
+                                            <s-table-header key={key}>{key}</s-table-header>
+                                        ))}
+                                    </s-table-header-row>
+                                    <s-table-body>
+                                        {displayResults.skippedRows
+                                            .slice((skippedPage - 1) * skippedRowsPerPage, skippedPage * skippedRowsPerPage)
+                                            .map((row, index) => (
+                                                <s-table-row key={index}>
+                                                    {Object.keys(displayResults.skippedRows[0] || {}).map((key, cellIndex) => (
+                                                        <s-table-cell key={cellIndex}>
+                                                            {row[key]?.toString() || '-'}
+                                                        </s-table-cell>
+                                                    ))}
+                                                </s-table-row>
+                                            ))}
+                                    </s-table-body>
+                                </s-table>
+                                {displayResults.skippedRows.length > skippedRowsPerPage && (
+                                    <Pagination
+                                        hasPrevious={skippedPage > 1}
+                                        onPrevious={() => setSkippedPage(skippedPage - 1)}
+                                        hasNext={skippedPage < Math.ceil(displayResults.skippedRows.length / skippedRowsPerPage)}
+                                        onNext={() => setSkippedPage(skippedPage + 1)}
+                                        type="table"
+                                        label={`${((skippedPage - 1) * skippedRowsPerPage) + 1}-${Math.min(skippedPage * skippedRowsPerPage, displayResults.skippedRows.length)} of ${displayResults.skippedRows.length}`}
                                     />
                                 )}
                             </s-section>
