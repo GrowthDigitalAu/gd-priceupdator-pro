@@ -133,6 +133,7 @@
     let currentVariantId = selectedVariantId;
     updatePriceDisplay(currentVariantId);
 
+    // Listen for click on variant pickers
     document.body.addEventListener('click', function(e) {
       if (e.target.matches('.js-gd-ext-variant-picker-rb')) {
          const productContainer = e.target.closest('.js-gd-ext-product-info-container');
@@ -141,6 +142,7 @@
       }
     });
 
+    // Listen for change on dropdown variant pickers
     document.body.addEventListener('change', function(e) {
       if (e.target.tagName === 'SELECT') {
         const selectedOption = e.target.options[e.target.selectedIndex];
