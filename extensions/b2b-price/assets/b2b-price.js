@@ -91,14 +91,7 @@
       updateTarget(internalContainer, html);
     }
 
-    let currentVariantId = selectedVariantId;
-    
-    updatePriceDisplay(currentVariantId);
-
-    // [NEW] Listen for click on variant pickers
-    document.body.addEventListener('click', function(e) {
-      if (e.target.matches('.js-gd-ext-variant-picker-rb')) {
-        const productContainer = e.target.closest('.js-gd-ext-product-info-container');
+    function observeAndTriggerUpdate(productContainer, fallbackVariantId) {
         if (productContainer) {
           const variantInput = productContainer.querySelector('.js-gd-ext-selected-variant-id');
           if (variantInput) {
@@ -114,7 +107,6 @@
                         updatePriceDisplay(updatedVariantId);
                     }
                     if (fallbackTimeout) clearTimeout(fallbackTimeout);
-                    
                     observer.disconnect();
                   }
                 }
@@ -131,57 +123,31 @@
                 }
               }
             }, 500);
+            return;
           }
-        } else {
-          const variantId = e.target.getAttribute('data-variant-id');
-          if(variantId) updatePriceDisplay(variantId);
         }
+        
+        if(fallbackVariantId) updatePriceDisplay(fallbackVariantId);
+    }
+
+    let currentVariantId = selectedVariantId;
+    updatePriceDisplay(currentVariantId);
+
+    document.body.addEventListener('click', function(e) {
+      if (e.target.matches('.js-gd-ext-variant-picker-rb')) {
+         const productContainer = e.target.closest('.js-gd-ext-product-info-container');
+         const variantId = e.target.getAttribute('data-variant-id');
+         observeAndTriggerUpdate(productContainer, variantId);
       }
     });
 
-    // [NEW] Listen for change on dropdown variant pickers
     document.body.addEventListener('change', function(e) {
       if (e.target.tagName === 'SELECT') {
         const selectedOption = e.target.options[e.target.selectedIndex];
         if (selectedOption && selectedOption.classList.contains('js-gd-ext-variant-picker-dd')) {
           const productContainer = e.target.closest('.js-gd-ext-product-info-container');
-          if (productContainer) {
-            const variantInput = productContainer.querySelector('.js-gd-ext-selected-variant-id');
-            if (variantInput) {
-              let fallbackTimeout;
-
-              const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                  if (mutation.type === 'attributes' && mutation.attributeName === 'value') {
-                    const updatedVariantId = variantInput.value;
-                    if (updatedVariantId) {
-                      const priceContainer = productContainer.querySelector("#b2b-price-container-" + blockId);
-                      if (priceContainer) {
-                        updatePriceDisplay(updatedVariantId);
-                      }
-                      if (fallbackTimeout) clearTimeout(fallbackTimeout);
-                      
-                      observer.disconnect();
-                    }
-                  }
-                });
-              });
-              
-              observer.observe(variantInput, { attributes: true });
-              
-              fallbackTimeout = setTimeout(() => {
-                if(variantInput.value) {
-                  const priceContainer = productContainer.querySelector("#b2b-price-container-" + blockId);
-                  if (priceContainer) {
-                    updatePriceDisplay(variantInput.value);
-                  }
-                }
-              }, 500);
-            }
-          } else {
-            const variantId = selectedOption.getAttribute('data-variant-id');
-            if(variantId) updatePriceDisplay(variantId);
-          }
+          const variantId = selectedOption.getAttribute('data-variant-id');
+          observeAndTriggerUpdate(productContainer, variantId);
         }
       }
     });
