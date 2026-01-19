@@ -7,8 +7,6 @@
   {% endif %}
 {% endfor %}
 
-{% comment %} <div class="gd-b2b-price-update"></div> {% endcomment %}
-
 <div id="b2b-price-container-{{ block.id }}" class="b2b-price-container">
   {% assign current_variant = selected_product.selected_or_first_available_variant %}
   {% assign b2b_price = current_variant.metafields.app.original_price.value | times: 100 %}
