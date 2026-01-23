@@ -1,6 +1,4 @@
-(function() {
-  if (customElements.get('b2b-prod-price')) return;
-
+if (!customElements.get('b2b-prod-price')) {
   class B2bProdPrice extends HTMLElement {
     constructor() {
       super();
@@ -240,6 +238,31 @@
         if(fallbackVariantId) this.updatePriceDisplay(fallbackVariantId);
     }
   }
-
   customElements.define("b2b-prod-price", B2bProdPrice);
-})();
+}
+
+
+if (!customElements.get('b2b-sticky-cart-price')) {
+  class B2bStickyCartPrice extends HTMLElement {
+    constructor() {
+      super();
+    }
+
+    connectedCallback() {
+      requestAnimationFrame(() => this.loadInitialPrice());
+    }
+
+    loadInitialPrice() {
+      const productInfoWrapper = this.closest(".js-gd-ext-pdp-info-section");
+      if (!productInfoWrapper) return;
+
+      const stickyPriceWrapper = productInfoWrapper.querySelector(".js-gd-ext-sticky-add-to-cart-price");
+      const b2bPriceWrapper = productInfoWrapper.querySelector(".js-gd-ext-b2b-price-block");
+      
+      if (stickyPriceWrapper && b2bPriceWrapper && b2bPriceWrapper.innerHTML.trim().length > 0) {
+          stickyPriceWrapper.innerHTML = b2bPriceWrapper.innerHTML;
+      }
+    }   
+  }
+  customElements.define("b2b-sticky-cart-price", B2bStickyCartPrice);
+}
