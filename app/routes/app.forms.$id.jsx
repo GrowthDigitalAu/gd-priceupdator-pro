@@ -280,7 +280,6 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
     padding: `${styleSettings?.fieldPadding || 8}px`,
     border: `1px solid ${styleSettings?.borderColor || '#ddd'}`,
     borderRadius: `${styleSettings?.borderRadius || 4}px`,
-    borderRadius: `${styleSettings?.borderRadius || 4}px`,
   };
 
   return (

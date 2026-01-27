@@ -11,6 +11,7 @@ RUN npm ci && npm cache clean --force
 
 COPY . .
 
+RUN npx prisma generate
 RUN npm run build
 
 ENV NODE_ENV=production
