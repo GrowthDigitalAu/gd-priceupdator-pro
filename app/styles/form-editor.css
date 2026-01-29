@@ -1,0 +1,76 @@
+.gd-form-input::placeholder {
+  color: var(--gd-placeholder-color, #999) !important;
+  opacity: 1;
+}
+.gd-form-input::-webkit-input-placeholder {
+  color: var(--gd-placeholder-color, #999) !important;
+  opacity: 1;
+}
+.gd-form-input::-moz-placeholder {
+  color: var(--gd-placeholder-color, #999) !important;
+  opacity: 1;
+}
+.gd-form-input::-ms-input-placeholder {
+  color: var(--gd-placeholder-color, #999) !important;
+  opacity: 1;
+}
+
+/* Custom Checkbox & Radio Styling for Admin Preview */
+input[type="checkbox"],
+input[type="radio"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: #fff;
+    margin: 0;
+    font: inherit;
+    color: currentColor;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--gd-border-color, #ccc) !important;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+input[type="checkbox"] {
+    border-radius: 3px;
+}
+
+input[type="radio"] {
+    border-radius: 50%;
+}
+
+input[type="checkbox"]::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    background-color: var(--gd-border-color, #ccc);
+    transform-origin: center;
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+input[type="radio"]::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    background-color: var(--gd-border-color, #ccc);
+}
+
+input[type="checkbox"]:checked::before,
+input[type="radio"]:checked::before {
+    transform: scale(1);
+}
+
+.gd-option-label {
+    margin-left: 8px;
+    line-height: 1.4;
+    padding-top: 1px;
+    cursor: pointer;
+}

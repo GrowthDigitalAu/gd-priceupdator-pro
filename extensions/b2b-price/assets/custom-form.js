@@ -156,12 +156,14 @@
                         const radioGroup = document.createElement('div');
                         radioGroup.className = 'gd-form-radio-group';
                         radioGroup.style.padding = '5px 0';
+                        radioGroup.style.display = 'flex';
+                        radioGroup.style.flexWrap = 'wrap';
+                        radioGroup.style.gap = '16px';
                         
                         field.options.forEach((opt, idx) => {
                             const rWrapper = document.createElement('div');
                             rWrapper.style.display = 'flex';
                             rWrapper.style.alignItems = 'center';
-                            rWrapper.style.marginBottom = '5px';
                             
                             const optId = 'app-' + field.id + '_' + idx;
 
@@ -170,13 +172,15 @@
                             rInput.id = optId;
                             rInput.name = field.id;
                             rInput.value = opt;
+                            rInput.style.borderColor = settings.borderColor;
+                            rInput.style.accentColor = settings.borderColor;
 
                             if(field.required) rInput.required = true;
                             
                             const rLabel = document.createElement('label');
                             rLabel.innerText = opt;
                             rLabel.htmlFor = optId;
-                            rLabel.style.marginLeft = '8px';
+                            rLabel.className = 'gd-option-label';
                             rLabel.style.color = settings.labelColor || '#000';
                             
                             rWrapper.appendChild(rInput);
@@ -189,12 +193,14 @@
                              const cbGroup = document.createElement('div');
                              cbGroup.className = 'gd-form-checkbox-group';
                              cbGroup.style.padding = '5px 0';
+                             cbGroup.style.display = 'flex';
+                             cbGroup.style.flexWrap = 'wrap';
+                             cbGroup.style.gap = '16px';
 
                              field.options.forEach((opt, idx) => {
                                 const cbWrapper = document.createElement('div');
                                 cbWrapper.style.display = 'flex';
                                 cbWrapper.style.alignItems = 'center';
-                                cbWrapper.style.marginBottom = '5px';
 
                                 const optId = 'app-' + field.id + '_' + idx;
 
@@ -203,11 +209,13 @@
                                 cbInput.id = optId;
                                 cbInput.name = field.id;
                                 cbInput.value = opt;
+                                cbInput.style.borderColor = settings.borderColor;
+                                cbInput.style.accentColor = settings.borderColor;
                                 
                                 const cbLabel = document.createElement('label');
                                 cbLabel.innerText = opt;
                                 cbLabel.htmlFor = optId;
-                                cbLabel.style.marginLeft = '8px';
+                                cbLabel.className = 'gd-option-label';
                                 cbLabel.style.color = settings.labelColor || '#000';
 
                                 cbWrapper.appendChild(cbInput);
@@ -224,10 +232,13 @@
                             input.type = 'checkbox';
                             input.id = 'app-' + field.id;
                             input.name = field.id;
+                            input.style.borderColor = settings.borderColor;
+                            input.style.accentColor = settings.borderColor;
                             
                             const cbLabel = document.createElement('label');
                             cbLabel.innerText = field.placeholder || field.label;
                             cbLabel.htmlFor = 'app-' + field.id; 
+                            cbLabel.className = 'gd-option-label';
                             cbLabel.style.color = settings.labelColor || '#000';
 
                             if(field.required) {
@@ -423,16 +434,26 @@
                     throw new Error('Submission failed');
                 }
                 } catch (err) {
-                console.error(err);
-                const msg = document.createElement('div');
-                msg.className = 'gd-form-message gd-form-error';
-                msg.innerText = 'Error submitting form. Please try again.';
-                formEl.insertAdjacentElement('afterend', msg);
-                
-                submitBtn.disabled = false;
-                submitBtn.innerText = originalText;
+                    console.error(err);
+                    const msg = document.createElement('div');
+                    msg.className = 'gd-form-message gd-form-error';
+                    msg.innerText = 'Error submitting form. Please try again.';
+                    formEl.insertAdjacentElement('afterend', msg);
+                    
+                    submitBtn.disabled = false;
+                    submitBtn.innerText = originalText;
                 }
             };
+
+            // Set CSS variable for placeholder color
+            const pColor = settings.placeholderColor || '#999';
+            formContainer.style.setProperty('--gd-placeholder-color', pColor);
+
+            const bColor = settings.borderColor || '#ccc';
+            formContainer.style.setProperty('--gd-border-color', bColor);
+
+            // Wrapper class for scoping
+            formContainer.className += ` gd-form-${form.id}-wrapper`;
 
             container.appendChild(formEl);
         }

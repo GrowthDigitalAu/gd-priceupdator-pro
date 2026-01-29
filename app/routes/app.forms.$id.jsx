@@ -22,6 +22,9 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import db from "../db.server";
 import { COUNTRY_CODES } from "../country_codes";
+import formEditorStyles from "../styles/form-editor.css?url";
+
+export const links = () => [{ rel: "stylesheet", href: formEditorStyles }];
 
 // Helper to convert HSB to Hex
 function hsbToHex({ hue, saturation, brightness }) {
@@ -339,11 +342,13 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
             </label>
             {field.type === 'textarea' ? (
               <textarea
+                className="gd-form-input"
                 placeholder={field.placeholder}
                 style={{ ...inputStyle, minHeight: '80px' }}
               />
             ) : field.type === 'select' ? (
               <select 
+                className="gd-form-input"
                 required={field.required}
                 style={{ ...inputStyle, color: styleSettings?.placeholderColor || '#999' }}
                 onChange={(e) => {
@@ -358,9 +363,16 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
             ) : field.type === 'radio' ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px' }}>
                 {field.options?.length > 0 ? field.options.map((opt, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input type="radio" name={field.id} />
-                    <span style={{ color: styleSettings?.labelColor || '#000' }}>{opt}</span>
+                  <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="radio"
+                      name={field.id}
+                      style={{
+                        borderColor: styleSettings?.borderColor,
+                        accentColor: styleSettings?.borderColor
+                      }}
+                    />
+                    <span className="gd-option-label" style={{ color: styleSettings?.labelColor || '#000' }}>{opt}</span>
                   </div>
                 )) : <Text tone="subdued">No options defined</Text>}
               </div>
@@ -368,31 +380,46 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px' }}>
                 {field.options?.length > 0 ? (
                   field.options.map((opt, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <input type="checkbox" />
-                      <span style={{ color: styleSettings?.labelColor }}>{opt}</span>
+                    <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        style={{
+                          borderColor: styleSettings?.borderColor,
+                          accentColor: styleSettings?.borderColor
+                        }}
+                      />
+                      <span className="gd-option-label" style={{ color: styleSettings?.labelColor }}>{opt}</span>
                     </div>
                   ))
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input type="checkbox" />
-                    <span style={{ color: styleSettings?.labelColor }}>{field.placeholder || "Checkbox text"}</span>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      style={{
+                        borderColor: styleSettings?.borderColor,
+                        accentColor: styleSettings?.borderColor
+                      }}
+                    />
+                    <span className="gd-option-label" style={{ color: styleSettings?.labelColor }}>{field.placeholder || "Checkbox text"}</span>
                   </div>
                 )}
               </div>
             ) : field.type === 'file' ? (
               <input
                 type="file"
-                style={{ ...inputStyle, padding: '4px' }}
+                className="gd-form-input"
+                style={{ ...inputStyle }}
               />
             ) : field.type === 'date' ? (
               <input
                 type="date"
+                className="gd-form-input"
                 style={{ ...inputStyle }}
               />
             ) : field.type === 'phone' ? (
               <div style={{ display: 'flex', gap: '8px' }}>
                 <select 
+                  className="gd-form-input"
                   style={{ ...inputStyle, width: '100px' }}
                 >
                   {COUNTRY_CODES.map(c => (
@@ -401,6 +428,7 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
                 </select>
                 <input
                   type="tel"
+                  className="gd-form-input"
                   placeholder={ field.placeholder }
                   style={{ ...inputStyle, flex: 1 }}
                   onInput={(e) => e.target.value = e.target.value.replace(/[^0-9]/g, '')}
@@ -409,6 +437,7 @@ function SortableField({ field, isActive, onClick, styleSettings }) {
             ) : (
               <input
                 type={field.type}
+                className="gd-form-input"
                 placeholder={field.placeholder}
                 style={{ ...inputStyle }}
               />
@@ -730,7 +759,13 @@ export default function FormEditor() {
                         items={fields}
                         strategy={rectSortingStrategy}
                       >
-                        <div style={{ display: 'flex', flexWrap: 'wrap', margin: '0 -10px' }}>
+                        <div style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          margin: '0 -10px',
+                          '--gd-placeholder-color': settings.placeholderColor || '#999',
+                          '--gd-border-color': settings.borderColor || '#ccc'
+                        }}>
                           {fields.map((field) => (
                             <SortableField
                               key={field.id}
@@ -743,8 +778,7 @@ export default function FormEditor() {
                         </div>
                       </SortableContext>
                     </DndContext>
-
-
+                    
                     {fields.length === 0 && (
                       <div style={{ textAlign: 'center', padding: '40px', color: '#999', border: '2px dashed #ddd', borderRadius: '8px' }}>
                         Select fields from the toolbox to start building.
@@ -812,7 +846,7 @@ export default function FormEditor() {
                           autoComplete="off"
                         />
 
-                        {field.type !== 'header' && field.type !== 'checkbox' && field.type !== 'radio' && (
+                        {field.type !== 'header' && field.type !== 'checkbox' && field.type !== 'radio' && field.type !== 'date' && field.type !== 'file' && (
                           <TextField
                             label="Placeholder"
                             value={field.placeholder}
