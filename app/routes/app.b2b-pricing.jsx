@@ -354,8 +354,8 @@ export default function B2BPricing() {
                                         <s-table-header-row>
                                             <s-table-header>Product</s-table-header>
                                             <s-table-header>SKU</s-table-header>
-                                            <s-table-header>Base price</s-table-header>
-                                            <s-table-header>Price adjustment</s-table-header>
+                                            <s-table-header>Original Price</s-table-header>
+                                            <s-table-header>B2B Price</s-table-header>
 
                                         </s-table-header-row>
                                         <s-table-body>
