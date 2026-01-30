@@ -11,7 +11,7 @@ export const loader = async ({ request }) => {
     const checkStatus = url.searchParams.get("checkStatus");
     const operationId = url.searchParams.get("operationId");
 
-    // --- POLLING LOGIC ---
+
     if (checkStatus === "true" && operationId) {
         const response = await admin.graphql(
             `#graphql
@@ -36,7 +36,6 @@ export const loader = async ({ request }) => {
         }
 
         if (bulkOperation.status === "COMPLETED") {
-             // Check result file for userErrors only
              let bulkErrors = [];
              
              if (bulkOperation.url) {
@@ -52,11 +51,9 @@ export const loader = async ({ request }) => {
                         }
                     });
                 } catch (e) {
-                    console.error("Error parsing bulk result", e);
                 }
              }
              
-             // Return success - the frontend will use the expectedUpdateCount
              return { success: true, status: "COMPLETED", bulkResults: { errors: bulkErrors }, operationId };
 
         } else if (bulkOperation.status === "RUNNING" || bulkOperation.status === "CREATED") {
@@ -86,12 +83,10 @@ export const action = async ({ request }) => {
         bulkOperationId: null
     };
 
-    // Use headers from frontend if available, otherwise collect from rows
     let allColumns = [];
     if (headersFromFrontend && headersFromFrontend.length > 0) {
         allColumns = headersFromFrontend;
     } else {
-        // Fallback: collect from rows (preserve order)
         const allColumnsSet = new Set();
         rows.forEach(row => {
             Object.keys(row).forEach(key => {
@@ -103,27 +98,22 @@ export const action = async ({ request }) => {
         });
     }
 
-    // Helper function to ensure all columns are present in a row (in correct order)
     const normalizeRow = (row, additionalFields = {}) => {
         const normalized = {};
-        // First, add all columns in the original order
         allColumns.forEach(col => {
             normalized[col] = row[col] !== undefined ? row[col] : "";
         });
-        // Then add any additional fields (like Error Reason)
         Object.keys(additionalFields).forEach(key => {
             normalized[key] = additionalFields[key];
         });
         return normalized;
     };
 
-    // 1. PREFETCH ALL VARIANTS WITH PRICE DATA
-    let skuMap = new Map(); // SKU -> { id, productId, price, compareAtPrice, b2bPrice }
+    let skuMap = new Map();
     
     let hasNextPage = true;
     let endCursor = null;
 
-    console.log("Prefetching price data...");
     while (hasNextPage) {
         const query = `#graphql
         query getPriceData($after: String) {
@@ -136,6 +126,7 @@ export const action = async ({ request }) => {
                         price
                         compareAtPrice
                         metafield(namespace: "app", key: "original_price") {
+                            id
                             value
                         }
                         product {
@@ -157,7 +148,8 @@ export const action = async ({ request }) => {
                     productId: node.product.id,
                     price: parseFloat(node.price),
                     compareAtPrice: node.compareAtPrice ? parseFloat(node.compareAtPrice) : null,
-                    b2bPrice: node.metafield?.value ? parseFloat(node.metafield.value) : null
+                    b2bPrice: node.metafield?.value ? parseFloat(node.metafield.value) : null,
+                    b2bMetafieldId: node.metafield?.id || null
                 });
             }
         });
@@ -165,11 +157,10 @@ export const action = async ({ request }) => {
         hasNextPage = data.data?.productVariants?.pageInfo?.hasNextPage;
         endCursor = data.data?.productVariants?.pageInfo?.endCursor;
     }
-    console.log(`Prefetched ${skuMap.size} variants.`);
 
-    // 2. PROCESS ROWS (In-Memory Validation)
+
     const processedCombinations = new Set();
-    const bulkUpdates = []; // { productId, variantInput }
+    const bulkUpdates = [];
 
     for (const row of rows) {
         try {
@@ -182,7 +173,6 @@ export const action = async ({ request }) => {
             const compareAtPriceRaw = row["CompareAt Price"];
             const b2bPriceRaw = row["B2B Price"];
 
-            // Parse Price
             let newPrice = null;
             if (priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== "") {
                 const parsed = parseFloat(priceRaw);
@@ -194,14 +184,15 @@ export const action = async ({ request }) => {
                 newPrice = parsed;
             }
 
-            // Parse CompareAt Price
             let newCompareAtPrice = null;
             let shouldClearCompareAt = false;
+            
             if (compareAtPriceRaw !== undefined && compareAtPriceRaw !== null) {
                 const trimmed = String(compareAtPriceRaw).trim();
-                if (trimmed === "") {
+                
+                if (trimmed.toLowerCase() === "null") {
                     shouldClearCompareAt = true;
-                } else {
+                } else if (trimmed !== "") {
                     const parsed = parseFloat(trimmed);
                     if (isNaN(parsed)) {
                         results.errors.push(`Skipped SKU ${sku}: Invalid CompareAt Price value '${compareAtPriceRaw}'`);
@@ -212,16 +203,24 @@ export const action = async ({ request }) => {
                 }
             }
 
-            // Parse B2B Price
             let newB2BPrice = null;
-            if (b2bPriceRaw !== undefined && b2bPriceRaw !== null && String(b2bPriceRaw).trim() !== "") {
-                const parsed = parseFloat(b2bPriceRaw);
-                if (!isNaN(parsed)) {
-                    newB2BPrice = parsed;
+            let shouldClearB2B = false;
+            
+            if (b2bPriceRaw !== undefined && b2bPriceRaw !== null) {
+                const trimmed = String(b2bPriceRaw).trim();
+                
+                if (trimmed.toLowerCase() === "null") {
+                    shouldClearB2B = true;
+                    newB2BPrice = 0;
+                } else if (trimmed !== "") {
+                    const parsed = parseFloat(trimmed);
+                    if (!isNaN(parsed)) {
+                        newB2BPrice = parsed;
+                    }
                 }
             }
 
-            // Check for duplicates
+
             if (processedCombinations.has(skuKey)) {
                 results.errors.push(`Skipped SKU ${sku}: Duplicate SKU in file`);
                 results.failedRows.push(normalizeRow(row, { "Error Reason": 'Duplicate SKU in file' }));
@@ -238,20 +237,17 @@ export const action = async ({ request }) => {
                 continue;
             }
 
-            // Build update input
             const variantInput = {
                 id: variantData.id
             };
 
             let needsUpdate = false;
 
-            // Check Price
             if (newPrice !== null && variantData.price !== newPrice) {
                 variantInput.price = String(newPrice);
                 needsUpdate = true;
             }
 
-            // Check CompareAt Price
             if (shouldClearCompareAt) {
                 if (variantData.compareAtPrice !== null) {
                     variantInput.compareAtPrice = null;
@@ -262,14 +258,21 @@ export const action = async ({ request }) => {
                 needsUpdate = true;
             }
 
-            // Check B2B Price
             if (newB2BPrice !== null && variantData.b2bPrice !== newB2BPrice) {
-                variantInput.metafields = [{
-                    namespace: "app",
-                    key: "original_price",
-                    value: String(newB2BPrice),
-                    type: "number_decimal"
-                }];
+                if (variantData.b2bMetafieldId) {
+                    variantInput.metafields = [{
+                        id: variantData.b2bMetafieldId,
+                        value: String(newB2BPrice),
+                        type: "number_decimal"
+                    }];
+                } else {
+                    variantInput.metafields = [{
+                        namespace: "app",
+                        key: "original_price",
+                        value: String(newB2BPrice),
+                        type: "number_decimal"
+                    }];
+                }
                 needsUpdate = true;
             }
 
@@ -278,7 +281,6 @@ export const action = async ({ request }) => {
                 continue;
             }
 
-            // Valid Update! Add to queue.
             bulkUpdates.push({
                 productId: variantData.productId,
                 variantInput: variantInput
@@ -290,14 +292,12 @@ export const action = async ({ request }) => {
         }
     }
 
-    console.log(`Validation complete. Bulk Updates Queue: ${bulkUpdates.length}`);
 
-    // 3. EXECUTE BULK UPDATES
+
     if (bulkUpdates.length === 0) {
         return { success: true, results };
     }
 
-    // Group by Product ID
     const productGroups = new Map();
     bulkUpdates.forEach(update => {
         if (!productGroups.has(update.productId)) {
@@ -306,7 +306,6 @@ export const action = async ({ request }) => {
         productGroups.get(update.productId).push(update.variantInput);
     });
 
-    // Prepare JSONL
     const jsonlLines = [];
     for (const [productId, variants] of productGroups) {
         jsonlLines.push(JSON.stringify({
