@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLoaderData, Form, useSubmit } from "react-router";
 import {
   Page,
@@ -9,6 +10,7 @@ import {
   Box,
   Divider,
   Banner,
+  Modal,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
@@ -120,14 +122,18 @@ export const action = async ({ request }) => {
 export default function SubscriptionPage() {
   const { subscription, manageUrl } = useLoaderData();
   const submit = useSubmit();
+  const [modalOpen, setModalOpen] = useState(false);
 
   const handleCancel = () => {
-    if (confirm("Are you sure you want to cancel your subscription?")) {
-      submit(
-        { subscriptionId: subscription.id },
-        { method: "POST" }
-      );
-    }
+    setModalOpen(true);
+  };
+
+  const confirmCancel = () => {
+    setModalOpen(false);
+    submit(
+      { subscriptionId: subscription.id },
+      { method: "POST" }
+    );
   };
 
   return (
@@ -185,6 +191,31 @@ export default function SubscriptionPage() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title="Cancel Subscription"
+        primaryAction={{
+          content: 'Cancel Subscription',
+          onAction: confirmCancel,
+          destructive: true,
+        }}
+        secondaryActions={[
+          {
+            content: 'Keep Subscription',
+            onAction: () => setModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <p>
+              Are you sure you want to cancel your subscription? You will lose access to app features immediately.
+            </p>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
