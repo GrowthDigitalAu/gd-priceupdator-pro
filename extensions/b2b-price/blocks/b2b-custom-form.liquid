@@ -38,28 +38,30 @@
 }
 {% endschema %}
 
-{{ 'custom-form.css' | asset_url | stylesheet_tag }}
+{% if shop.metafields.gd_price_updator.subscription_active == 'true' %}
+  {{ 'custom-form.css' | asset_url | stylesheet_tag }}
 
-{% if block.settings.custom_css != blank %}
-  <style>
-    {{ block.settings.custom_css }}
-  </style>
+  {% if block.settings.custom_css != blank %}
+    <style>
+      {{ block.settings.custom_css }}
+    </style>
+  {% endif %}
+  <script src="{{ 'country-codes.js' | asset_url }}" defer></script>
+  <script src="{{ 'custom-form.js' | asset_url }}" defer></script>
+
+  <div
+    id="gd-custom-form-{{ block.id }}"
+    class="gd-custom-form-wrapper"
+    style="background-color: {{ block.settings.bg_color }}; padding: {{ block.settings.padding }}px 20px;"
+  >
+    <div class="gd-form-loading">Loading form...</div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.GDCustomForm) {
+        window.GDCustomForm.init('{{ block.id }}', '{{ block.settings.form_id }}');
+      }
+    });
+  </script>
 {% endif %}
-<script src="{{ 'country-codes.js' | asset_url }}" defer></script>
-<script src="{{ 'custom-form.js' | asset_url }}" defer></script>
-
-<div
-  id="gd-custom-form-{{ block.id }}"
-  class="gd-custom-form-wrapper"
-  style="background-color: {{ block.settings.bg_color }}; padding: {{ block.settings.padding }}px 20px;"
->
-  <div class="gd-form-loading">Loading form...</div>
-</div>
-
-<script>
-  document.addEventListener('DOMContentLoaded', function () {
-    if (window.GDCustomForm) {
-      window.GDCustomForm.init('{{ block.id }}', '{{ block.settings.form_id }}');
-    }
-  });
-</script>

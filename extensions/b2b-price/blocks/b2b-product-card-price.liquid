@@ -1,14 +1,16 @@
-<script src="{{ 'b2b-product-price.js' | asset_url }}" defer="defer"></script>
-{% if block.settings.enable_card_price_script %}
-  <script src="{{ 'b2b-card-price.js' | asset_url }}" defer="defer"></script>
-{% endif %}
+{% if shop.metafields.gd_price_updator.subscription_active == 'true' %}
+  <script src="{{ 'b2b-product-price.js' | asset_url }}" defer="defer"></script>
+  {% if block.settings.enable_card_price_script %}
+    <script src="{{ 'b2b-card-price.js' | asset_url }}" defer="defer"></script>
+  {% endif %}
 
-<style>
-  .js-gd-ext-card-price {
-    display: flex;
-    gap: 10px;
-  }
-</style>
+  <style>
+    .js-gd-ext-card-price {
+      display: flex;
+      gap: 10px;
+    }
+  </style>
+{% endif %}
 
 {% schema %}
 {

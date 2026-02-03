@@ -26,6 +26,9 @@ export const loader = async ({ request }) => {
               test
             }
           }
+          shop {
+            id
+          }
         }
       `
     );
@@ -33,6 +36,36 @@ export const loader = async ({ request }) => {
     const billingJson = await billingCheck.json();
     const activeSubscriptions =
       billingJson.data?.currentAppInstallation?.activeSubscriptions || [];
+    const shopId = billingJson.data?.shop?.id;
+
+    const isActive = activeSubscriptions.length > 0;
+
+    if (shopId) {
+      await admin.graphql(
+        `#graphql
+        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        {
+          variables: {
+            metafields: [
+              {
+                ownerId: shopId,
+                namespace: "gd_price_updator",
+                key: "subscription_active",
+                type: "single_line_text_field",
+                value: isActive ? "true" : "false"
+              }
+            ]
+          }
+        }
+      );
+    }
 
     if (activeSubscriptions.length > 0) {
       hasActiveSubscription = true;

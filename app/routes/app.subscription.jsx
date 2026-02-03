@@ -74,6 +74,39 @@ export const action = async ({ request }) => {
     }
   );
 
+  // Sync metafield to false
+  try {
+     const shopQuery = await admin.graphql(`query { shop { id } }`);
+     const shopJson = await shopQuery.json();
+     const shopId = shopJson.data?.shop?.id;
+     
+     if (shopId) {
+        await admin.graphql(
+          `#graphql
+          mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+              userErrors { field message }
+            }
+          }`,
+          {
+            variables: {
+              metafields: [
+                {
+                  ownerId: shopId,
+                  namespace: "gd_price_updator",
+                  key: "subscription_active",
+                  type: "single_line_text_field",
+                  value: "false"
+                }
+              ]
+            }
+          }
+        );
+     }
+  } catch (e) {
+    console.error("Failed to sync metafield on cancel:", e);
+  }
+
   const responseJson = await response.json();
   const errors = responseJson.data?.appSubscriptionCancel?.userErrors;
 
@@ -132,7 +165,7 @@ export default function SubscriptionPage() {
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd">
                   {subscription 
-                    ? "Manage or cancel your plan below." 
+                    ? "Change or cancel your plan below." 
                     : "You need a subscription to use this app."}
                 </Text>
                 
