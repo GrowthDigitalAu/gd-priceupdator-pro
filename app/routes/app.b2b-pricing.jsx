@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "react-router";
+import { useLoaderData, useFetcher, useNavigate, useSearchParams, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { Pagination, Banner, InlineStack, Text, BlockStack } from "@shopify/polaris";
@@ -13,7 +13,7 @@ export const loader = async ({ request }) => {
     const rawQuery = url.searchParams.get("query") || "";
     const query = rawQuery ? `(title:*${rawQuery}* OR sku:*${rawQuery}*)` : "";
 
-    // Fetch subscription information
+
     const billingCheck = await admin.graphql(
         `#graphql
         query {
@@ -102,7 +102,7 @@ export const loader = async ({ request }) => {
     const pageInfo = responseJson.data?.products?.pageInfo || {};
     const totalCount = responseJson.data?.productsCount?.count || 0;
 
-    // Build initialAdjustments from Metafields of fetched products
+
     const initialAdjustments = {};
     products.forEach(({ node: product }) => {
         product.variants.edges.forEach(({ node: variant }) => {
@@ -113,7 +113,7 @@ export const loader = async ({ request }) => {
         });
     });
 
-    // Count ALL variants with B2B prices set (not just current page)
+
     const countResponse = await admin.graphql(
         `#graphql
         query {
@@ -150,9 +150,7 @@ export const loader = async ({ request }) => {
         });
     });
 
-    // Note: This is a simplified count that fetches first 250 products.
-    // For shops with more products, you'd need pagination logic here.
-    // For now, this should work for most use cases.
+
 
     return { 
         products, 
@@ -175,7 +173,7 @@ export const action = async ({ request }) => {
     if (bulkUpdates) {
         const updates = JSON.parse(bulkUpdates);
 
-        // Fetch subscription info for limit checking
+
         const billingCheck = await admin.graphql(
             `#graphql
             query {
@@ -192,7 +190,7 @@ export const action = async ({ request }) => {
         const planName = activeSubscriptions[0]?.name || null;
         const variantLimit = getVariantLimitForPlan(planName);
 
-        // Count current B2B variants
+
         const countResponse = await admin.graphql(
             `#graphql
             query {
@@ -226,7 +224,7 @@ export const action = async ({ request }) => {
             });
         });
 
-        // Separate updates into deletions, updates, and additions
+
         const deletions = [];
         const modifications = [];
         const additions = [];
@@ -236,25 +234,25 @@ export const action = async ({ request }) => {
             const isCurrentlySet = currentVariantsWithB2B.has(update.variantId);
             
             if (valueToSet === null && isCurrentlySet) {
-                // Deletion: removing existing B2B price
+
                 deletions.push(update);
             } else if (valueToSet !== null && isCurrentlySet) {
-                // Modification: updating existing B2B price
+
                 modifications.push(update);
             } else if (valueToSet !== null && !isCurrentlySet) {
-                // Addition: adding new B2B price
+
                 additions.push(update);
             }
         });
 
-        // Calculate available slots for new additions
+
         let currentCount = currentVariantsWithB2B.size;
         const slotsFreedByDeletions = deletions.length;
         const availableSlots = variantLimit !== null 
             ? Math.max(0, variantLimit - currentCount + slotsFreedByDeletions)
             : Infinity;
 
-        // Determine which additions can be processed (already sorted by timestamp from client)
+
         const additionsToProcess = variantLimit !== null 
             ? additions.slice(0, availableSlots)
             : additions;
@@ -262,16 +260,16 @@ export const action = async ({ request }) => {
             ? additions.slice(availableSlots)
             : [];
 
-        // Process all operations
+
         const processedUpdates = [...deletions, ...modifications, ...additionsToProcess];
         const skippedVariantIds = skippedAdditions.map(u => u.variantId);
 
-        // Execute GraphQL mutations
+
         for (const update of processedUpdates) {
             const valueToSet = (update.adjustment === '' || update.adjustment === null) ? null : String(update.adjustment);
 
             if (valueToSet === null) {
-                // Delete the metafield
+
                 await admin.graphql(
                     `#graphql
                     mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
@@ -300,7 +298,7 @@ export const action = async ({ request }) => {
                     }
                 );
             } else {
-                // Set/Update the metafield
+
                 await admin.graphql(
                     `#graphql
                     mutation metaFieldSet($metafields: [MetafieldsSetInput!]!) {
@@ -349,27 +347,29 @@ export default function B2BPricing() {
     const shopify = useAppBridge();
     const fetcher = useFetcher();
     const navigate = useNavigate();
+    const navigation = useNavigation();
     const [searchParams] = useSearchParams();
     const [priceAdjustments, setPriceAdjustments] = useState(initialAdjustments || {});
     const [selectedVariants, setSelectedVariants] = useState({});
     const [isStylesLoaded, setIsStylesLoaded] = useState(false);
     const [priceEntryTimestamps, setPriceEntryTimestamps] = useState({});
 
-    // Initialize searchTerm from URL param
+
     const [searchTerm, setSearchTerm] = useState(searchParams.get("query") || "");
 
     const isSaving = fetcher.state !== "idle";
+    const isNavigating = navigation.state !== "idle" && navigation.location?.pathname === "/app/subscription";
 
-    // Wait for styles to load before showing Banner to prevent icon flash
+
     useEffect(() => {
-        // Small delay to ensure Polaris CSS is loaded
+
         const timer = setTimeout(() => {
             setIsStylesLoaded(true);
         }, 100);
         return () => clearTimeout(timer);
     }, []);
 
-    // Handle successful save with toast and clear unsaved fields
+
     useEffect(() => {
         if (fetcher.data?.success) {
             const { saved, skipped, skippedVariantIds } = fetcher.data;
@@ -377,7 +377,7 @@ export default function B2BPricing() {
             if (skipped > 0) {
                 shopify.toast.show(`${saved} variant(s) saved. ${skipped} variant(s) skipped due to plan limit reached.`, { isError: true });
                 
-                // Clear the skipped fields from state
+
                 if (skippedVariantIds && skippedVariantIds.length > 0) {
                     setPriceAdjustments(prev => {
                         const updated = { ...prev };
@@ -387,7 +387,7 @@ export default function B2BPricing() {
                         return updated;
                     });
                     
-                    // Also clear timestamps for skipped variants
+
                     setPriceEntryTimestamps(prev => {
                         const updated = { ...prev };
                         skippedVariantIds.forEach(id => {
@@ -406,7 +406,7 @@ export default function B2BPricing() {
     }, [fetcher.data, shopify]);
 
 
-    // Sync state with loader data when it changes (pagination/search)
+
     useEffect(() => {
         if (initialAdjustments) {
             setPriceAdjustments(prev => ({
@@ -418,11 +418,10 @@ export default function B2BPricing() {
 
     const currentPage = parseInt(searchParams.get("page") || "1", 10);
 
-    // Debounce search function
+
     useEffect(() => {
         const timer = setTimeout(() => {
-            // Only navigate if the search term is different from what's in the URL
-            // and we're not just on initial load with the same term
+
             const currentQuery = searchParams.get("query") || "";
             if (searchTerm !== currentQuery) {
                 const params = new URLSearchParams(searchParams);
@@ -431,29 +430,29 @@ export default function B2BPricing() {
                 } else {
                     params.delete("query");
                 }
-                // Reset pagination when searching
+
                 params.delete("cursor");
                 params.delete("direction");
                 params.set("page", "1");
                 navigate(`?${params.toString()}`);
             }
-        }, 500); // 500ms debounce
+        }, 500);
 
         return () => clearTimeout(timer);
     }, [searchTerm, navigate, searchParams]);
 
-    // Use products directly as they are now filtered by the server
+
     const filteredProducts = products;
 
     const handlePriceAdjustmentChange = (variantId, value) => {
-        // Validation for the state update
+
         if (value === '' || /^\d*\.?\d*$/.test(value)) {
             setPriceAdjustments(prev => ({
                 ...prev,
                 [variantId]: value
             }));
             
-            // Track timestamp when user enters/changes a value
+
             if (value !== '') {
                 setPriceEntryTimestamps(prev => ({
                     ...prev,
@@ -464,17 +463,17 @@ export default function B2BPricing() {
     };
 
     const handleKeyDown = (e) => {
-        // Allow navigation and editing keys
+
         const allowedKeys = ['Backspace', 'Delete', 'Tab', 'Enter', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
         if (allowedKeys.includes(e.key) || e.ctrlKey || e.metaKey) return;
 
-        // Allow single decimal point
+
         if (e.key === '.') {
             if (e.target.value.includes('.')) e.preventDefault();
             return;
         }
 
-        // Block non-numeric keys
+
         if (!/^\d$/.test(e.key)) {
             e.preventDefault();
         }
@@ -496,7 +495,7 @@ export default function B2BPricing() {
             return variant?.node;
         }
 
-        // Default to first variant
+
         return product.variants.edges[0]?.node;
     };
 
@@ -512,31 +511,23 @@ export default function B2BPricing() {
     };
 
     const startItem = (currentPage - 1) * 10 + 1;
-    // When searching, total count might not be accurate for the filtered set, 
-    // but for now we use totalCount from loader which is total shop products. 
-    // Ideally GraphQL returns count of query matches but standard productsCount is total.
-    // We'll stick to simple logic for now.
+
     const endItem = Math.min(startItem + products.length - 1, totalCount);
 
-    // Note: totalCount from productsCount query usually returns TOTAL store products, 
-    // not filtered count. For search results accurate counts, separate query is needed.
-    // For specific search pagination label, we might just say "Page X" if count is unknown,
-    // or rely on what we have.
+
     const paginationLabel = totalCount > 0 ? `${startItem}-${endItem} of ${totalCount} products` : "No products";
 
 
 
     const handleBulkSave = () => {
         const updates = [];
-        // Send all adjustments for currently visible products (including empty ones for deletion)
+
         filteredProducts.forEach(({ node: product }) => {
             product.variants.edges.forEach(({ node: variant }) => {
                 const currentVal = priceAdjustments[variant.id];
                 const initialVal = initialAdjustments[variant.id];
 
-                // Convert both to string for comparison to avoid float issues, or standardized float
-                // initialVal is float or undefined
-                // currentVal is string or undefined (from state)
+
 
                 let hasChanged = false;
 
@@ -544,13 +535,13 @@ export default function B2BPricing() {
                 const normalizedInitial = initialVal === undefined ? null : initialVal;
 
                 if (normalizedCurrent !== normalizedInitial) {
-                    // Check for float precision differences if both are numbers
+
                     if (normalizedCurrent !== null && normalizedInitial !== null) {
                         if (Math.abs(normalizedCurrent - normalizedInitial) > 0.001) {
                             hasChanged = true;
                         }
                     } else {
-                        // One is null, the other is not
+
                         hasChanged = true;
                     }
                 }
@@ -558,15 +549,15 @@ export default function B2BPricing() {
                 if (hasChanged) {
                     updates.push({
                         variantId: variant.id,
-                        adjustment: currentVal, // Pass the raw string/value to action
-                        timestamp: priceEntryTimestamps[variant.id] || 0 // Include timestamp for priority
+                        adjustment: currentVal,
+                        timestamp: priceEntryTimestamps[variant.id] || 0
                     });
                 }
             });
         });
 
         if (updates.length > 0) {
-            // Sort updates by timestamp (oldest first = highest priority)
+
             updates.sort((a, b) => a.timestamp - b.timestamp);
             
             fetcher.submit(
@@ -606,9 +597,10 @@ export default function B2BPricing() {
                             </InlineStack>
                             {subscription.variantLimit !== null && (
                                 <s-button 
-                                    url="/app/subscription" 
+                                    onClick={() => navigate('/app/subscription')} 
                                     variant="primary" 
                                     size="slim"
+                                    loading={isNavigating}
                                 >
                                     Upgrade Plan
                                 </s-button>
@@ -624,7 +616,7 @@ export default function B2BPricing() {
                         <s-button variant="primary" onClick={handleBulkSave} loading={isSaving}>Save</s-button>
                     </div>
                     <s-stack gap="400" direction="block">
-                        {/* Search Bar */}
+
                         <s-text-field
                             label="Search products"
                             value={searchTerm}
@@ -634,7 +626,7 @@ export default function B2BPricing() {
                             onClearButtonClick={() => setSearchTerm("")}
                         />
 
-                        {/* Products Table */}
+
                         {filteredProducts.length === 0 ? (
                             <s-box paddingBlockStart="large">
                                 <div style={{ textAlign: 'center', padding: '60px 20px' }}>
@@ -741,7 +733,7 @@ export default function B2BPricing() {
                                     </s-table>
                                 </s-box>
 
-                                {/* Pagination */}
+
                                 {(pageInfo.hasNextPage || pageInfo.hasPreviousPage) && (
                                     <Pagination
                                         hasPrevious={pageInfo.hasPreviousPage}
