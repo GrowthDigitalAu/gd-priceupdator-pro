@@ -4,6 +4,7 @@ import { authenticate } from "../shopify.server";
 import ExcelJS from "exceljs";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { Pagination, ProgressBar } from "@shopify/polaris";
+import { getVariantLimitForPlan } from "../utils/subscription";
 
 export const loader = async ({ request }) => {
     const { admin } = await authenticate.admin(request);
@@ -76,10 +77,14 @@ export const action = async ({ request }) => {
 
     const results = {
         total: rows.length,
-        updated: 0, 
+        updated: 0,
+        updatedPrice: 0,
+        updatedCompareAt: 0,
+        updatedB2B: 0,
         errors: [],
         failedRows: [],
         skippedRows: [],
+        limitReachedCount: 0,
         bulkOperationId: null
     };
 
@@ -113,6 +118,22 @@ export const action = async ({ request }) => {
     
     let hasNextPage = true;
     let endCursor = null;
+
+    const billingCheck = await admin.graphql(
+        `#graphql
+        query {
+            currentAppInstallation {
+                activeSubscriptions {
+                    name
+                }
+            }
+        }`
+    );
+
+    const billingJson = await billingCheck.json();
+    const activeSubscriptions = billingJson.data?.currentAppInstallation?.activeSubscriptions || [];
+    const planName = activeSubscriptions[0]?.name || null;
+    const variantLimit = getVariantLimitForPlan(planName);
 
     while (hasNextPage) {
         const query = `#graphql
@@ -148,7 +169,7 @@ export const action = async ({ request }) => {
                     productId: node.product.id,
                     price: parseFloat(node.price),
                     compareAtPrice: node.compareAtPrice ? parseFloat(node.compareAtPrice) : null,
-                    b2bPrice: node.metafield?.value ? parseFloat(node.metafield.value) : null,
+                    b2bPrice: node.metafield?.value !== undefined && node.metafield?.value !== null ? parseFloat(node.metafield.value) : null,
                     b2bMetafieldId: node.metafield?.id || null
                 });
             }
@@ -158,11 +179,42 @@ export const action = async ({ request }) => {
         endCursor = data.data?.productVariants?.pageInfo?.endCursor;
     }
 
+    let currentB2BCount = 0;
+    skuMap.forEach(variant => {
+        if (variant.b2bPrice !== null && variant.b2bPrice > 0) {
+            currentB2BCount++;
+        }
+    });
+
 
     const processedCombinations = new Set();
     const bulkUpdates = [];
 
-    for (const row of rows) {
+    const hasB2BPriceColumn = rows.length > 0 && rows[0].hasOwnProperty("B2B Price");
+    
+    let sortedRows = rows;
+    if (hasB2BPriceColumn) {
+        sortedRows = [...rows].sort((a, b) => {
+            const aB2BRaw = a["B2B Price"];
+            const bB2BRaw = b["B2B Price"];
+            
+            const aB2BValue = aB2BRaw !== undefined && aB2BRaw !== null && String(aB2BRaw).trim() !== "" && String(aB2BRaw).trim().toLowerCase() !== "null" 
+                ? parseFloat(aB2BRaw) 
+                : null;
+            const bB2BValue = bB2BRaw !== undefined && bB2BRaw !== null && String(bB2BRaw).trim() !== "" && String(bB2BRaw).trim().toLowerCase() !== "null"
+                ? parseFloat(bB2BRaw) 
+                : null;
+            
+            const aIsDeletion = aB2BValue === null || aB2BValue <= 0;
+            const bIsDeletion = bB2BValue === null || bB2BValue <= 0;
+            
+            if (aIsDeletion && !bIsDeletion) return -1;
+            if (!aIsDeletion && bIsDeletion) return 1;
+            return 0;
+        });
+    }
+
+    for (const row of sortedRows) {
         try {
             if (!row["SKU"] || row["SKU"] === "SKU") continue;
 
@@ -242,20 +294,26 @@ export const action = async ({ request }) => {
             };
 
             let needsUpdate = false;
+            let priceUpdated = false;
+            let compareAtUpdated = false;
+            let b2bUpdated = false;
 
             if (newPrice !== null && variantData.price !== newPrice) {
                 variantInput.price = String(newPrice);
                 needsUpdate = true;
+                priceUpdated = true;
             }
 
             if (shouldClearCompareAt) {
                 if (variantData.compareAtPrice !== null) {
                     variantInput.compareAtPrice = null;
                     needsUpdate = true;
+                    compareAtUpdated = true;
                 }
             } else if (newCompareAtPrice !== null && variantData.compareAtPrice !== newCompareAtPrice) {
                 variantInput.compareAtPrice = String(newCompareAtPrice);
                 needsUpdate = true;
+                compareAtUpdated = true;
             }
 
             if (newB2BPrice !== null && variantData.b2bPrice !== newB2BPrice) {
@@ -274,12 +332,40 @@ export const action = async ({ request }) => {
                     }];
                 }
                 needsUpdate = true;
+                b2bUpdated = true;
             }
 
             if (!needsUpdate) {
                 results.skippedRows.push(normalizeRow(row, { "Reason": 'Prices already match' }));
                 continue;
             }
+
+            if (b2bUpdated) {
+                const oldB2BPrice = variantData.b2bPrice;
+                const isAddingMeaningfulB2BPrice = (oldB2BPrice === null || oldB2BPrice <= 0) && newB2BPrice > 0;
+                const isRemovingMeaningfulB2BPrice = (oldB2BPrice !== null && oldB2BPrice > 0) && (newB2BPrice === null || newB2BPrice <= 0);
+                
+                if (isRemovingMeaningfulB2BPrice) {
+                    currentB2BCount--;
+                }
+                
+                if (isAddingMeaningfulB2BPrice && variantLimit !== null) {
+                    const availableSlots = variantLimit - currentB2BCount;
+                    
+                    if (availableSlots <= 0) {
+                        results.errors.push(`SKU ${sku}: Plan limit reached. Your ${planName || 'Free'} plan allows ${variantLimit} variants with B2B prices.`);
+                        results.failedRows.push(normalizeRow(row, { "Error Reason": 'Plan limit reached' }));
+                        results.limitReachedCount++;
+                        continue;
+                    }
+                    
+                    currentB2BCount++;
+                }
+            }
+
+            if (priceUpdated) results.updatedPrice++;
+            if (compareAtUpdated) results.updatedCompareAt++;
+            if (b2bUpdated) results.updatedB2B++;
 
             bulkUpdates.push({
                 productId: variantData.productId,
@@ -499,13 +585,22 @@ export default function ImportProductPrices() {
                        
                        const merged = {
                            ...validatedResults,
-                           // Use the expected count we stored during validation
                            updated: validatedResults.expectedUpdateCount || 0,
+                           updatedPrice: validatedResults.updatedPrice || 0,
+                           updatedCompareAt: validatedResults.updatedCompareAt || 0,
+                           updatedB2B: validatedResults.updatedB2B || 0,
                            errors: [...validatedResults.errors, ...bulkRes.errors]
                        };
                        setFinalResults(merged);
                        setProgress(100);
-                       shopify.toast.show(`Import complete. ${merged.updated} products updated.`, { duration: 5000 });
+                       
+                       const breakdown = [];
+                       if (merged.updatedPrice > 0) breakdown.push(`${merged.updatedPrice} Price`);
+                       if (merged.updatedCompareAt > 0) breakdown.push(`${merged.updatedCompareAt} CompareAt`);
+                       if (merged.updatedB2B > 0) breakdown.push(`${merged.updatedB2B} B2B`);
+                       const breakdownText = breakdown.length > 0 ? ` (${breakdown.join(', ')})` : '';
+                       
+                       shopify.toast.show(`Import complete. ${merged.updated} products updated${breakdownText}.`, { duration: 5000 });
                        setTimeout(() => setIsProgressVisible(false), 2000);
                   } else if (pollFetcher.data.status === "FAILED") {
                        shopify.toast.show("Background update failed.", { duration: 5000 });
@@ -583,9 +678,14 @@ export default function ImportProductPrices() {
                         <s-section heading="Import Results">
                             <s-stack gap="200" direction="block">
                                 <s-text as="p">Total rows: {displayResults.total}</s-text>
-                                <s-text as="p">Successfully updated: {displayResults.updated}</s-text>
+                                <s-text as="p">Successfully updated Price: {displayResults.updatedPrice || 0}</s-text>
+                                <s-text as="p">Successfully updated CompareAt Price: {displayResults.updatedCompareAt || 0}</s-text>
+                                <s-text as="p">Successfully updated B2B Price: {displayResults.updatedB2B || 0}</s-text>
                                 <s-text as="p">Skipped: {displayResults.skippedRows?.length || 0}</s-text>
                                 <s-text as="p">Errors: {displayResults.errors.length}</s-text>
+                                {displayResults.limitReachedCount > 0 && (
+                                    <s-text as="p" tone="critical">Plan limit reached: {displayResults.limitReachedCount} row(s) failed due to subscription limit</s-text>
+                                )}
                             </s-stack>
                         </s-section>
                     </s-box>

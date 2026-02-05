@@ -107,7 +107,7 @@ export const loader = async ({ request }) => {
     products.forEach(({ node: product }) => {
         product.variants.edges.forEach(({ node: variant }) => {
             const metaValue = variant.metafield?.value;
-            if (metaValue) {
+            if (metaValue !== undefined && metaValue !== null) {
                 initialAdjustments[variant.id] = parseFloat(metaValue);
             }
         });
@@ -144,7 +144,8 @@ export const loader = async ({ request }) => {
     
     countJson.data?.products?.edges.forEach(({ node: product }) => {
         product.variants.edges.forEach(({ node: variant }) => {
-            if (variant.metafield?.value) {
+            const b2bValue = variant.metafield?.value;
+            if (b2bValue !== undefined && b2bValue !== null && parseFloat(b2bValue) > 0) {
                 currentB2BCount++;
             }
         });
