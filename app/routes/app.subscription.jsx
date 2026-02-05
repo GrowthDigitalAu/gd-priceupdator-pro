@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLoaderData, Form, useSubmit } from "react-router";
+import { useLoaderData, Form, useSubmit, useNavigation } from "react-router";
 import {
   Page,
   Layout,
@@ -122,7 +122,10 @@ export const action = async ({ request }) => {
 export default function SubscriptionPage() {
   const { subscription, manageUrl } = useLoaderData();
   const submit = useSubmit();
+  const navigation = useNavigation();
   const [modalOpen, setModalOpen] = useState(false);
+
+  const isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
 
   const handleCancel = () => {
     setModalOpen(true);
@@ -181,7 +184,7 @@ export default function SubscriptionPage() {
                   </Button>
                   
                   {subscription && (
-                    <Button tone="critical" onClick={handleCancel}>
+                    <Button tone="critical" onClick={handleCancel} loading={isSubmitting}>
                       Cancel Subscription
                     </Button>
                   )}
@@ -200,6 +203,7 @@ export default function SubscriptionPage() {
           content: 'Cancel Subscription',
           onAction: confirmCancel,
           destructive: true,
+          loading: isSubmitting,
         }}
         secondaryActions={[
           {
