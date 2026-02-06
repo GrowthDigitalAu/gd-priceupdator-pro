@@ -1,15 +1,11 @@
 import { useState } from "react";
 import { useLoaderData, Form, useSubmit, useNavigation } from "react-router";
 import {
-  Page,
-  Layout,
   Text,
-  Card,
   Button,
   BlockStack,
   Box,
   Divider,
-  Banner,
   Modal,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -140,60 +136,58 @@ export default function SubscriptionPage() {
   };
 
   return (
-    <Page title="Subscription">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Current Plan
+    <s-page heading="Subscription">
+      <s-box paddingBlockStart="large">
+        <s-section>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">
+              Current Plan
+            </Text>
+            
+            {subscription ? (
+              <Box>
+                <Text as="p" variant="bodyMd" fontWeight="bold">
+                  {subscription.name}
+                </Text>
+                <Text as="p" variant="bodySm" tone={subscription.status === 'ACTIVE' ? 'success' : 'critical'}>
+                  Status: {subscription.status}
+                </Text>
+                {subscription.test && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    (Test Charge)
+                  </Text>
+                )}
+              </Box>
+            ) : (
+              <Text as="p" tone="critical">
+                No active subscription found.
+              </Text>
+            )}
+
+            <Divider />
+
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">
+                {subscription 
+                  ? "Change or cancel your plan below." 
+                  : "You need a subscription to use this app."}
               </Text>
               
-              {subscription ? (
-                <Box>
-                  <Text as="p" variant="bodyMd" fontWeight="bold">
-                    {subscription.name}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone={subscription.status === 'ACTIVE' ? 'success' : 'critical'}>
-                    Status: {subscription.status}
-                  </Text>
-                  {subscription.test && (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      (Test Charge)
-                    </Text>
-                  )}
-                </Box>
-              ) : (
-                <Text as="p" tone="critical">
-                  No active subscription found.
-                </Text>
-              )}
-
-              <Divider />
-
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd">
-                  {subscription 
-                    ? "Change or cancel your plan below." 
-                    : "You need a subscription to use this app."}
-                </Text>
+              <BlockStack gap="200" inlineAlign="start">
+                <Button url={manageUrl} target="_top" variant="primary">
+                  {subscription ? "Change Plan" : "Choose a Plan"}
+                </Button>
                 
-                <BlockStack gap="200" inlineAlign="start">
-                   <Button url={manageUrl} target="_top" variant="primary">
-                    {subscription ? "Change Plan" : "Choose a Plan"}
+                {subscription && (
+                  <Button tone="critical" onClick={handleCancel} loading={isSubmitting}>
+                    Cancel Subscription
                   </Button>
-                  
-                  {subscription && (
-                    <Button tone="critical" onClick={handleCancel} loading={isSubmitting}>
-                      Cancel Subscription
-                    </Button>
-                  )}
-                </BlockStack>
+                )}
               </BlockStack>
             </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
+          </BlockStack>
+        </s-section>
+      </s-box>
 
       <Modal
         open={modalOpen}
@@ -220,6 +214,6 @@ export default function SubscriptionPage() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Page>
+    </s-page>
   );
 }

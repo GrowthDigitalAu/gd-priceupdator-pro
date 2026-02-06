@@ -4,7 +4,7 @@ import { EmptyState, Pagination } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { COUNTRY_CODES } from "../country_codes";
+import { COUNTRY_CODES } from "../utils/country_codes";
 
 const formatPhoneNumber = (rawPhone) => {
   if (!rawPhone) return null;
@@ -126,7 +126,7 @@ export const loader = async ({ request }) => {
       };
 
     } catch (dbError) {
-      console.log("Failed to fetch recent submissions:", dbError);
+      console.error("Failed to fetch recent submissions:", dbError);
     }
 
     const totalSubmissionsCount = await db.formSubmission.count({
@@ -378,7 +378,7 @@ export default function Forms() {
   const filteredSubmissions = recentSubmissions;
 
   const handleDelete = (id) => {
-    submit({ id, intent: "delete" }, { method: "post" });
+    submit({ id, intent: "delete" }, { method: "post", action: '/app/forms' });
   };
 
   const formatDate = (dateStr) => {
@@ -427,7 +427,13 @@ export default function Forms() {
                       </s-paragraph>
                       <s-paragraph>
                         <s-text type="strong">Field count: </s-text>
-                        <s-text>{JSON.parse(item.fields).length}</s-text>
+                        <s-text>{(() => {
+                          try {
+                            return JSON.parse(item.fields).length;
+                          } catch {
+                            return 'N/A';
+                          }
+                        })()}</s-text>
                       </s-paragraph>
                     </s-stack>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -501,10 +507,17 @@ export default function Forms() {
                       <s-table-header>Actions</s-table-header>
                     </s-table-header-row>
                     <s-table-body>
-                      {filteredSubmissions.map(
+                      {(filteredSubmissions || []).map(
                         (sub, index) => {
-                          const data = JSON.parse(sub.data);
-                          const isSubmitting = navigation.state === "submitting" && navigation.formData.get("submissionId") === String(sub.id);
+                          let data;
+                          try {
+                            data = JSON.parse(sub.data);
+                          } catch (parseError) {
+                            // Skip this submission if data is corrupted
+                            return null;
+                          }
+
+                          const isSubmitting = navigation.state === "submitting" && navigation.formData?.get("submissionId") === String(sub.id);
                           const submittingIntent = isSubmitting ? navigation.formData.get("intent") : null;
 
                           return (
@@ -516,50 +529,26 @@ export default function Forms() {
                                       <strong>{k}:</strong>{" "}
                                       {typeof v === "object" && v !== null ? (
                                         v._type === "file" ? (
-                                          (() => {
-                                            const isImage = v.name?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
-                                            const isPdf = v.name?.match(/\.pdf$/i);
-
-                                            if (isImage) {
-                                              return (
-                                                <a href={v.content} download={v.name} target="_blank" rel="noopener noreferrer" style={{ display: 'block', width: '100px' }}>
-                                                  <img
-                                                    src={v.content}
-                                                    alt={v.name}
-                                                    style={{
-                                                      width: '100px',
-                                                      height: '100px',
-                                                      objectFit: 'cover',
-                                                      border: '1px solid #ccc',
-                                                      borderRadius: '4px'
-                                                    }}
-                                                  />
-                                                </a>
-                                              );
-                                            } else if (isPdf) {
-                                              return (
-                                                <a href={v.content} download={v.name} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                                  <div style={{
-                                                    width: '100px',
-                                                    height: '100px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    border: '1px solid #ccc',
-                                                    borderRadius: '4px',
-                                                    backgroundColor: '#f4f6f8'
-                                                  }}>
-                                                    <span style={{ fontSize: '24px', color: '#d82c2c' }}>PDF</span>
-                                                  </div>
-                                                </a>
-                                              );
-                                            }
-                                            return (
-                                              <a href={v.content} download={v.name} target="_blank" rel="noopener noreferrer">
-                                                Download {v.name}
-                                              </a>
-                                            );
-                                          })()
+                                          <a 
+                                            href="#" 
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              // Only try to download if content exists
+                                              if (v.content && v.name) {
+                                                try {
+                                                  const link = document.createElement('a');
+                                                  link.href = v.content;
+                                                  link.download = v.name;
+                                                  link.click();
+                                                } catch (err) {
+                                                  shopify.toast.show(`Failed to download ${v.name}`, { isError: true });
+                                                }
+                                              }
+                                            }}
+                                            style={{ color: '#0066cc', textDecoration: 'underline', cursor: 'pointer' }}
+                                          >
+                                            Download {v.name || 'file'}
+                                          </a>
                                         ) : JSON.stringify(v)
                                       ) : (
                                         typeof v === 'string' && (k.toLowerCase().includes('phone') || k.toLowerCase().includes('mobile')) ? v.replace(/-/g, "") : v
@@ -585,7 +574,7 @@ export default function Forms() {
                                         size="slim"
                                         variant="primary"
                                         loading={submittingIntent === 'approve'}
-                                        onClick={() => submit({ intent: 'approve', submissionId: sub.id }, { method: 'post' })}
+                                        onClick={() => submit({ intent: 'approve', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
                                       >
                                         Approve
                                       </s-button>
@@ -595,7 +584,7 @@ export default function Forms() {
                                         size="slim"
                                         tone="critical"
                                         loading={submittingIntent === 'reject'}
-                                        onClick={() => submit({ intent: 'reject', submissionId: sub.id }, { method: 'post' })}
+                                        onClick={() => submit({ intent: 'reject', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
                                       >
                                         Reject
                                       </s-button>

@@ -1,14 +1,18 @@
-import { Outlet, useLoaderData, useRouteError, Link, useLocation, useNavigate } from "react-router";
+import { Outlet, useLoaderData, useRouteError, Link, useLocation, useNavigate, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import appStyles from "../styles/app.css?url";
 import translations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "../shopify.server";
 import { useEffect } from "react";
 
-export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+export const links = () => [
+  { rel: "stylesheet", href: polarisStyles },
+  { rel: "stylesheet", href: appStyles }
+];
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -85,6 +89,11 @@ export default function App() {
   const { apiKey, hasActiveSubscription } = useLoaderData();
   const navigate = useNavigate();
   const location = useLocation();
+  const navigation = useNavigation();
+
+  // Only show loading bar when navigating to a different route, not on form submissions or form edits
+  const isFormNavigation = navigation.location?.pathname?.startsWith("/app/forms/");
+  const isLoading = navigation.state === "loading" && navigation.location?.pathname !== location.pathname && !isFormNavigation;
 
   useEffect(() => {
     if (!hasActiveSubscription && location.pathname !== "/app/subscription") {
@@ -97,6 +106,9 @@ export default function App() {
 
   return (
     <AppProvider embedded apiKey={apiKey}>
+      {/* Top Loading Progress Bar */}
+      {isLoading && <div className="loading-bar" />}
+      
       <NavMenu>
         <s-link href="/app" rel="home">Home</s-link>
         <s-link href="/app/forms">Custom Form</s-link>

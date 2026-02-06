@@ -21,7 +21,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import db from "../db.server";
-import { COUNTRY_CODES } from "../country_codes";
+import { COUNTRY_CODES } from "../utils/country_codes";
 import formEditorStyles from "../styles/form-editor.css?url";
 
 export const links = () => [{ rel: "stylesheet", href: formEditorStyles }];
