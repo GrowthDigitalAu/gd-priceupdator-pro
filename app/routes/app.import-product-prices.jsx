@@ -383,14 +383,16 @@ export const action = async ({ request }) => {
             if (compareAtUpdated) results.updatedCompareAt++;
             if (b2bUpdated) results.updatedB2B++;
 
-            // Add to updated rows with old values
-            const oldValues = {
-                "Old Price": priceUpdated ? (variantData.price || '-') : 'Same',
-                "Old CompareAt Price": compareAtUpdated ? (variantData.compareAtPrice || '-') : 'Same',
-                "Old B2B Price": b2bUpdated ? (variantData.b2bPrice || '-') : (b2bLimitReached ? 'Limit Reached' : 'Same')
-            };
+            // Track which columns were updated
+            const updatedColumns = [];
+            if (priceUpdated) updatedColumns.push('Price updated');
+            if (compareAtUpdated) updatedColumns.push('CompareAt Price updated');
+            if (b2bUpdated) updatedColumns.push('B2B Price updated');
             
-            results.updatedRows.push(normalizeRow(row, oldValues));
+            // Add to updated rows with simple reason
+            results.updatedRows.push(normalizeRow(row, { 
+                "Reason": updatedColumns.join(', ')
+            }));
 
             // If B2B was blocked, also add to failed rows with detailed message
             if (b2bLimitReached) {
@@ -402,6 +404,7 @@ export const action = async ({ request }) => {
                     ? `${successfulUpdates.join(', ')}, but B2B Price limit reached`
                     : 'B2B Price limit reached';
                 
+                results.errors.push(`SKU ${sku}: ${failReason}. Your ${planName || 'Free'} plan allows ${variantLimit} variants with B2B prices.`);
                 results.failedRows.push(normalizeRow(row, { "Error Reason": failReason }));
             }
 
@@ -604,7 +607,7 @@ export default function ImportProductPrices() {
                 setFinalResults(res); 
                 setProgress(100);
                 setTimeout(() => setIsProgressVisible(false), 2000);
-                shopify.toast.show(`Import complete.`, { duration: 5000 });
+                shopify.toast.show('Import complete', { duration: 5000 });
             }
         }
     }, [fetcher.data, fetcher.state]);
@@ -635,13 +638,7 @@ export default function ImportProductPrices() {
                        setFinalResults(merged);
                        setProgress(100);
                        
-                       const breakdown = [];
-                       if (merged.updatedPrice > 0) breakdown.push(`${merged.updatedPrice} Price`);
-                       if (merged.updatedCompareAt > 0) breakdown.push(`${merged.updatedCompareAt} CompareAt`);
-                       if (merged.updatedB2B > 0) breakdown.push(`${merged.updatedB2B} B2B`);
-                       const breakdownText = breakdown.length > 0 ? ` (${breakdown.join(', ')})` : '';
-                       
-                       shopify.toast.show(`Import complete. ${merged.updated} products updated${breakdownText}.`, { duration: 5000 });
+                       shopify.toast.show('Import complete', { duration: 5000 });
                        setTimeout(() => setIsProgressVisible(false), 2000);
                   } else if (pollFetcher.data.status === "FAILED") {
                        shopify.toast.show("Background update failed.", { duration: 5000 });
@@ -723,9 +720,6 @@ export default function ImportProductPrices() {
                                 <s-text as="p">Successfully updated CompareAt Price: {displayResults.updatedCompareAt || 0}</s-text>
                                 <s-text as="p">Successfully updated B2B Price: {displayResults.updatedB2B || 0}</s-text>
                                 <s-text as="p">Errors: {displayResults.errors.length}</s-text>
-                                {displayResults.limitReachedCount > 0 && (
-                                    <s-text as="p" tone="critical">Plan limit reached: {displayResults.limitReachedCount} row(s) failed due to subscription limit</s-text>
-                                )}
                             </s-stack>
                         </s-section>
                     </s-box>
