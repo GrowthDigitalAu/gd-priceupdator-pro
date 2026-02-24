@@ -112,7 +112,7 @@ export default function App() {
       {isLoading && <div className="loading-bar" />}
       
       <NavMenu>
-        <s-link href="/app" rel="home">Home</s-link>
+        <s-link href="/app" rel="home">GD: Wholesale Pro</s-link>
         <s-link href="/app/forms">Custom Form</s-link>
         <s-link href="/app/b2b-pricing">B2B Product Price</s-link>
         <s-link href="/app/import-product-prices">Import Product Prices</s-link>
