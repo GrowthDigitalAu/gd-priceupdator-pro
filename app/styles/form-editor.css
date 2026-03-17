@@ -74,3 +74,24 @@ input[type="radio"]:checked::before {
     padding-top: 1px;
     cursor: pointer;
 }
+
+/* Icon-only delete button for form submissions table */
+.btn-delete-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #d72c0d;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-delete-icon:hover {
+  background: #fde8e8;
+}

@@ -1,10 +1,13 @@
 import { useLoaderData, Link, useRouteError, useSubmit, useActionData, useNavigate, useNavigation, useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { EmptyState, Pagination } from "@shopify/polaris";
+import { EmptyState, Pagination, Modal } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { COUNTRY_CODES } from "../utils/country_codes";
+import formEditorStyles from "../styles/form-editor.css?url";
+
+export const links = () => [{ rel: "stylesheet", href: formEditorStyles }];
 
 const formatPhoneNumber = (rawPhone) => {
   if (!rawPhone) return null;
@@ -163,6 +166,13 @@ export const action = async ({ request }) => {
       },
     });
     return { status: "success" };
+  }
+
+  if (intent === "deleteSubmission" && submissionId) {
+    await db.formSubmission.delete({
+      where: { id: parseInt(submissionId) },
+    });
+    return { status: "success", message: "Submission deleted." };
   }
 
   if (intent === "reject" || intent === "approve") {
@@ -343,6 +353,7 @@ export default function Forms() {
   const actionData = useActionData();
   const [searchParams, setSearchParams] = useSearchParams();
   const [editingFormId, setEditingFormId] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // holds submissionId to delete
 
   useEffect(() => {
     if (actionData) {
@@ -404,231 +415,270 @@ export default function Forms() {
 
 
   return (
-    <s-page>
-      <TitleBar title="Custom Form" />
-      <s-box paddingBlockStart="large">
-        <s-section>
-          {forms.length === 0 ? (
-            <EmptyState
-              heading="Create your form"
-              action={{ content: "Create Form", url: "/app/forms/new" }}
-              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-            >
-              <p>Build custom form to collect information from your customers.</p>
-            </EmptyState>
-          ) : (
-            <s-stack>
-              <s-text variant="headingLg" type="strong">Your Form</s-text>
-              {forms.map((item, index) => (
-                <div
-                  key={item.id}
-                  style={{
-                    padding: '12px 16px',
-                    borderTop: index === 0 ? 'none' : '1px solid #e1e3e5'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <s-stack>
-                      <s-paragraph>
-                        <s-text type="strong">Form Name: </s-text>
-                        <s-text>{item.title}</s-text>
-                      </s-paragraph>
-                      <s-paragraph>
-                        <s-text type="strong">Field count: </s-text>
-                        <s-text>{(() => {
-                          try {
-                            return JSON.parse(item.fields).length;
-                          } catch {
-                            return 'N/A';
-                          }
-                        })()}</s-text>
-                      </s-paragraph>
-                    </s-stack>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <s-button 
-                        loading={editingFormId === item.id}
-                        onClick={() => {
-                          setEditingFormId(item.id);
-                          navigate(`/app/forms/${item.id}`);
-                        }}
-                      >
-                        Edit
-                      </s-button>
-                      <s-button tone="critical" onClick={() => handleDelete(item.id)}>Delete</s-button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </s-stack>
-          )}
-        </s-section>
-
-        {totalSubmissionsCount > 0 && (
-          <s-box paddingBlockStart="large">
-            <s-section>
-              <s-text type="strong">Form Submissions</s-text>
-              <div style={{ 
-                display: 'flex', 
-                gap: '0', 
-                borderBottom: '1px solid #e1e3e5', 
-                marginBottom: '16px',
-                marginTop: '12px'
-              }}>
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => handleTabChange(tab.id)}
+    <>
+      <s-page>
+        <TitleBar title="Custom Form" />
+        <s-box paddingBlockStart="large">
+          <s-section>
+            {forms.length === 0 ? (
+              <EmptyState
+                heading="Create your form"
+                action={{ content: "Create Form", url: "/app/forms/new" }}
+                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+              >
+                <p>Build custom form to collect information from your customers.</p>
+              </EmptyState>
+            ) : (
+              <s-stack>
+                <s-text variant="headingLg" type="strong">Your Form</s-text>
+                {forms.map((item, index) => (
+                  <div
+                    key={item.id}
                     style={{
                       padding: '12px 16px',
-                      border: 'none',
-                      background: 'transparent',
-                      cursor: 'pointer',
-                      borderBottom: activeTab === tab.id ? '2px solid #2c6ecb' : '2px solid transparent',
-                      color: activeTab === tab.id ? '#2c6ecb' : '#202223',
-                      fontWeight: activeTab === tab.id ? '600' : '400',
-                      fontSize: '14px',
-                      transition: 'all 0.2s ease',
-                      fontFamily: '-apple-system, BlinkMacSystemFont, San Francisco, Segoe UI, Roboto, Helvetica Neue, sans-serif',
-                      marginBottom: '-1px'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (activeTab !== tab.id) {
-                        e.currentTarget.style.color = '#2c6ecb';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (activeTab !== tab.id) {
-                        e.currentTarget.style.color = '#202223';
-                      }
+                      borderTop: index === 0 ? 'none' : '1px solid #e1e3e5'
                     }}
                   >
-                    {tab.content}
-                  </button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <s-stack>
+                        <s-paragraph>
+                          <s-text type="strong">Form Name: </s-text>
+                          <s-text>{item.title}</s-text>
+                        </s-paragraph>
+                        <s-paragraph>
+                          <s-text type="strong">Field count: </s-text>
+                          <s-text>{(() => {
+                            try {
+                              return JSON.parse(item.fields).length;
+                            } catch {
+                              return 'N/A';
+                            }
+                          })()}</s-text>
+                        </s-paragraph>
+                      </s-stack>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <s-button 
+                          loading={editingFormId === item.id}
+                          onClick={() => {
+                            setEditingFormId(item.id);
+                            navigate(`/app/forms/${item.id}`);
+                          }}
+                        >
+                          Edit
+                        </s-button>
+                        <s-button tone="critical" onClick={() => handleDelete(item.id)}>Delete</s-button>
+                      </div>
+                    </div>
+                  </div>
                 ))}
-              </div>
+              </s-stack>
+            )}
+          </s-section>
 
-              {filteredSubmissions.length === 0 ? (
-                <EmptyState
-                  heading="No submissions found"
-                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                >
-                  <p>No submissions match the selected filter.</p>
-                </EmptyState>
-              ) : (
-                  <s-table>
-                    <s-table-header-row>
-                      <s-table-header>Customer Details</s-table-header>
-                      <s-table-header>Status</s-table-header>
-                      <s-table-header>Date</s-table-header>
-                      <s-table-header>Actions</s-table-header>
-                    </s-table-header-row>
-                    <s-table-body>
-                      {(filteredSubmissions || []).map(
-                        (sub, index) => {
-                          let data;
-                          try {
-                            data = JSON.parse(sub.data);
-                          } catch (parseError) {
-                            // Skip this submission if data is corrupted
-                            return null;
-                          }
-
-                          const isSubmitting = navigation.state === "submitting" && navigation.formData?.get("submissionId") === String(sub.id);
-                          const submittingIntent = isSubmitting ? navigation.formData.get("intent") : null;
-
-                          return (
-                            <s-table-row key={sub.id}>
-                              <s-table-cell>
-                                <div style={{ whiteSpace: 'pre-wrap' }}>
-                                  {Object.entries(data).map(([k, v]) => (
-                                    <div key={k}>
-                                      <strong>{k}:</strong>{" "}
-                                      {typeof v === "object" && v !== null ? (
-                                        v._type === "file" ? (
-                                          <a 
-                                            href="#" 
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              // Only try to download if content exists
-                                              if (v.content && v.name) {
-                                                try {
-                                                  const link = document.createElement('a');
-                                                  link.href = v.content;
-                                                  link.download = v.name;
-                                                  link.click();
-                                                } catch (err) {
-                                                  shopify.toast.show(`Failed to download ${v.name}`, { isError: true });
-                                                }
-                                              }
-                                            }}
-                                            style={{ color: '#0066cc', textDecoration: 'underline', cursor: 'pointer' }}
-                                          >
-                                            Download {v.name || 'file'}
-                                          </a>
-                                        ) : JSON.stringify(v)
-                                      ) : (
-                                        typeof v === 'string' && (k.toLowerCase().includes('phone') || k.toLowerCase().includes('mobile')) ? v.replace(/-/g, "") : v
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              </s-table-cell>
-                              <s-table-cell>
-                                {sub.status === 'APPROVED' ? (
-                                  <s-badge tone="success">Approved</s-badge>
-                                ) : sub.status === 'REJECTED' ? (
-                                  <s-badge tone="critical">Rejected</s-badge>
-                                ) : (
-                                  <s-badge tone="attention">Pending</s-badge>
-                                )}
-                              </s-table-cell>
-                              <s-table-cell>{formatDate(sub.createdAt)}</s-table-cell>
-                              <s-table-cell>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                  {sub.status !== 'APPROVED' && (
-                                      <s-button
-                                        size="slim"
-                                        variant="primary"
-                                        loading={submittingIntent === 'approve'}
-                                        onClick={() => submit({ intent: 'approve', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
-                                      >
-                                        Approve
-                                      </s-button>
-                                    )}
-                                  {sub.status !== 'REJECTED' && (
-                                      <s-button
-                                        size="slim"
-                                        tone="critical"
-                                        loading={submittingIntent === 'reject'}
-                                        onClick={() => submit({ intent: 'reject', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
-                                      >
-                                        Reject
-                                      </s-button>
-                                    )}
-                                </div>
-                              </s-table-cell>
-                            </s-table-row>
-                          )
+          {totalSubmissionsCount > 0 && (
+            <s-box paddingBlockStart="large">
+              <s-section>
+                <s-text type="strong">Form Submissions</s-text>
+                <div style={{ 
+                  display: 'flex', 
+                  gap: '0', 
+                  borderBottom: '1px solid #e1e3e5', 
+                  marginBottom: '16px',
+                  marginTop: '12px'
+                }}>
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id)}
+                      style={{
+                        padding: '12px 16px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === tab.id ? '2px solid #2c6ecb' : '2px solid transparent',
+                        color: activeTab === tab.id ? '#2c6ecb' : '#202223',
+                        fontWeight: activeTab === tab.id ? '600' : '400',
+                        fontSize: '14px',
+                        transition: 'all 0.2s ease',
+                        fontFamily: '-apple-system, BlinkMacSystemFont, San Francisco, Segoe UI, Roboto, Helvetica Neue, sans-serif',
+                        marginBottom: '-1px'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeTab !== tab.id) {
+                          e.currentTarget.style.color = '#2c6ecb';
                         }
-                      )}
-                    </s-table-body>
-                  </s-table>
-              )}
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeTab !== tab.id) {
+                          e.currentTarget.style.color = '#202223';
+                        }
+                      }}
+                    >
+                      {tab.content}
+                    </button>
+                  ))}
+                </div>
 
-             {pagination.totalPages > 1 && (
-                <Pagination
-                  hasPrevious={pagination.hasPreviousPage}
-                  onPrevious={() => handlePageChange(pagination.currentPage - 1)}
-                  hasNext={pagination.hasNextPage}
-                  onNext={() => handlePageChange(pagination.currentPage + 1)}
-                  type="table"
-                  label={paginationLabel}
-                />
-              )}
-            </s-section>
-          </s-box>
-        )}
-      </s-box>
-    </s-page>
+                {filteredSubmissions.length === 0 ? (
+                  <EmptyState
+                    heading="No submissions found"
+                    image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                  >
+                    <p>No submissions match the selected filter.</p>
+                  </EmptyState>
+                ) : (
+                    <s-table>
+                      <s-table-header-row>
+                        <s-table-header>Customer Details</s-table-header>
+                        <s-table-header>Status</s-table-header>
+                        <s-table-header>Date</s-table-header>
+                        <s-table-header>Actions</s-table-header>
+                      </s-table-header-row>
+                      <s-table-body>
+                        {(filteredSubmissions || []).map(
+                          (sub, index) => {
+                            let data;
+                            try {
+                              data = JSON.parse(sub.data);
+                            } catch (parseError) {
+                              // Skip this submission if data is corrupted
+                              return null;
+                            }
+
+                            const isSubmitting = navigation.state === "submitting" && navigation.formData?.get("submissionId") === String(sub.id);
+                            const submittingIntent = isSubmitting ? navigation.formData.get("intent") : null;
+
+                            return (
+                              <s-table-row key={sub.id}>
+                                <s-table-cell>
+                                  <div style={{ whiteSpace: 'pre-wrap' }}>
+                                    {Object.entries(data).map(([k, v]) => (
+                                      <div key={k}>
+                                        <strong>{k}:</strong>{" "}
+                                        {typeof v === "object" && v !== null ? (
+                                          v._type === "file" ? (
+                                            <a 
+                                              href="#" 
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                // Only try to download if content exists
+                                                if (v.content && v.name) {
+                                                  try {
+                                                    const link = document.createElement('a');
+                                                    link.href = v.content;
+                                                    link.download = v.name;
+                                                    link.click();
+                                                  } catch (err) {
+                                                    shopify.toast.show(`Failed to download ${v.name}`, { isError: true });
+                                                  }
+                                                }
+                                              }}
+                                              style={{ color: '#0066cc', textDecoration: 'underline', cursor: 'pointer' }}
+                                            >
+                                              Download {v.name || 'file'}
+                                            </a>
+                                          ) : JSON.stringify(v)
+                                        ) : (
+                                          typeof v === 'string' && (k.toLowerCase().includes('phone') || k.toLowerCase().includes('mobile')) ? v.replace(/-/g, "") : v
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </s-table-cell>
+                                <s-table-cell>
+                                  {sub.status === 'APPROVED' ? (
+                                    <s-badge tone="success">Approved</s-badge>
+                                  ) : sub.status === 'REJECTED' ? (
+                                    <s-badge tone="critical">Rejected</s-badge>
+                                  ) : (
+                                    <s-badge tone="attention">Pending</s-badge>
+                                  )}
+                                </s-table-cell>
+                                <s-table-cell>{formatDate(sub.createdAt)}</s-table-cell>
+                                <s-table-cell>
+                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    {sub.status !== 'APPROVED' && (
+                                        <s-button
+                                          size="slim"
+                                          variant="primary"
+                                          loading={submittingIntent === 'approve'}
+                                          onClick={() => submit({ intent: 'approve', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
+                                        >
+                                          Approve
+                                        </s-button>
+                                      )}
+                                    {sub.status !== 'REJECTED' && (
+                                        <s-button
+                                          size="slim"
+                                          tone="critical"
+                                          loading={submittingIntent === 'reject'}
+                                          onClick={() => submit({ intent: 'reject', submissionId: sub.id }, { method: 'post', action: '/app/forms' })}
+                                        >
+                                          Reject
+                                        </s-button>
+                                      )}
+                                    <button
+                                      className="btn-delete-icon"
+                                      title="Delete submission"
+                                      onClick={() => setDeleteConfirm(sub.id)}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                        <path d="M10 11v6"/>
+                                        <path d="M14 11v6"/>
+                                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </s-table-cell>
+                              </s-table-row>
+                            )
+                          }
+                        )}
+                      </s-table-body>
+                    </s-table>
+                )}
+
+              {pagination.totalPages > 1 && (
+                  <Pagination
+                    hasPrevious={pagination.hasPreviousPage}
+                    onPrevious={() => handlePageChange(pagination.currentPage - 1)}
+                    hasNext={pagination.hasNextPage}
+                    onNext={() => handlePageChange(pagination.currentPage + 1)}
+                    type="table"
+                    label={paginationLabel}
+                  />
+                )}
+              </s-section>
+            </s-box>
+          )}
+        </s-box>
+      </s-page>
+
+      <Modal
+        open={deleteConfirm !== null}
+        onClose={() => setDeleteConfirm(null)}
+        title="Delete Submission"
+        primaryAction={{
+          content: 'Delete',
+          tone: 'critical',
+          onAction: () => {
+            submit({ intent: 'deleteSubmission', submissionId: deleteConfirm }, { method: 'post', action: '/app/forms' });
+            setDeleteConfirm(null);
+          },
+        }}
+        secondaryActions={[
+          {
+            content: 'Cancel',
+            onAction: () => setDeleteConfirm(null),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <s-text>Are you sure you want to delete this record? This action cannot be undone.</s-text>
+        </Modal.Section>
+      </Modal>
+    </>
   );
 }
