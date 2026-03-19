@@ -112,11 +112,13 @@ export const loader = async ({ request }) => {
         product.variants.edges.forEach(({ node: variant }) => {
             const metaValue = variant.metafield?.value;
             if (metaValue !== undefined && metaValue !== null) {
-                initialAdjustments[variant.id] = parseFloat(metaValue);
+                const b2bParsed = parseFloat(metaValue);
+                if (b2bParsed > 0) initialAdjustments[variant.id] = b2bParsed;
             }
             const minQtyValue = variant.minQtyMetafield?.value;
             if (minQtyValue !== undefined && minQtyValue !== null) {
-                initialMinQty[variant.id] = parseInt(minQtyValue, 10);
+                const minParsed = parseInt(minQtyValue, 10);
+                if (minParsed > 0) initialMinQty[variant.id] = minParsed;
             }
         });
     });
@@ -424,6 +426,26 @@ export default function B2BPricing() {
         if (fetcher.data?.success) {
             const { saved, skipped, skippedVariantIds } = fetcher.data;
             
+            setPriceAdjustments(prev => {
+                const updated = { ...prev };
+                Object.keys(updated).forEach(id => {
+                    if (updated[id] === "0" || updated[id] === 0 || parseFloat(updated[id]) === 0) {
+                        delete updated[id];
+                    }
+                });
+                return updated;
+            });
+
+            setMinQtyAdjustments(prev => {
+                const updated = { ...prev };
+                Object.keys(updated).forEach(id => {
+                    if (updated[id] === "0" || updated[id] === 0 || parseInt(updated[id], 10) === 0) {
+                        delete updated[id];
+                    }
+                });
+                return updated;
+            });
+
             if (skipped > 0) {
                 shopify.toast.show(`${saved} variant(s) saved. ${skipped} variant(s) skipped due to plan limit reached.`, { isError: true });
                 
