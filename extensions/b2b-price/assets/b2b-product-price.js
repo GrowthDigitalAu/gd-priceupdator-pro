@@ -126,8 +126,9 @@ if (!customElements.get('b2b-prod-price')) {
         let html = '';
 
         if (isB2B && data.b2b_price && data.b2b_price > 0) {
-           const minQtyBadge = (data.b2b_min_qty && data.b2b_min_qty > 1) 
-                ? `<div class="b2b-min-qty-text b2b-min-qty-wrapper"><span class="b2b-min-qty-inner-text">${(this.config.minQtyText || "A minimum quantity of [b2b_min_qty] is required to qualify for this price.").replace('[b2b_min_qty]', data.b2b_min_qty)}</span></div>` 
+           const minQtyText = this.config.minQtyText;
+           const minQtyBadge = (data.b2b_min_qty && data.b2b_min_qty > 1 && minQtyText) 
+                ? `<div class="b2b-min-qty-text b2b-min-qty-wrapper"><span class="b2b-min-qty-inner-text">${minQtyText.replace('[b2b_min_qty]', data.b2b_min_qty)}</span></div>` 
                 : '';
            html = `
               <div class="b2b-price-wrapper b2b-customer-price">

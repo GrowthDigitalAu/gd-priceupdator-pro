@@ -67,7 +67,7 @@ if (!customElements.get('b2b-card-price')) {
       const config = this.getConfiguration();
       if (!config) return;
 
-      const { variantsData, moneyFormat, isB2B } = config;
+      const { variantsData, moneyFormat, isB2B, minQtyText } = config;
       const variants = Object.values(variantsData);
       
       if (variants.length === 0) return;
@@ -95,6 +95,7 @@ if (!customElements.get('b2b-card-price')) {
       const winnerIsB2B = minB2b < minRegular;
       
       let displayPrice, displayCompareAt;
+      let minQtyHtml = '';
 
       if (winnerIsB2B) {
            displayPrice = minB2b;
@@ -102,6 +103,12 @@ if (!customElements.get('b2b-card-price')) {
            const validRegulars = regularPrices.filter(p => p > displayPrice);
            if (validRegulars.length > 0) {
                displayCompareAt = Math.min(...validRegulars);
+           }
+
+           const winningVariant = variants.find(v => v.b2b_price === displayPrice);
+           if (winningVariant && winningVariant.b2b_min_qty > 1 && minQtyText) {
+               const text = minQtyText.replace('[b2b_min_qty]', winningVariant.b2b_min_qty);
+               minQtyHtml = `<div class="b2b-min-qty-text b2b-min-qty-wrapper"><span class="b2b-min-qty-inner-text">${text}</span></div>`;
            }
       } else {
            displayPrice = minRegular;
@@ -141,6 +148,7 @@ if (!customElements.get('b2b-card-price')) {
       }
 
       finalHtml += `<span class="price-current">${this.formatMoney(displayPrice, moneyFormat)}</span></div>`;
+      finalHtml += minQtyHtml;
 
       priceContainer.innerHTML = finalHtml;
     }   
