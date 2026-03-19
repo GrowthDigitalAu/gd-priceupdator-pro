@@ -80,6 +80,7 @@ export const action = async ({ request }) => {
         updated: 0,
         updatedPrice: 0,
         updatedCompareAt: 0,
+        updatedMinQty: 0,
         updatedB2B: 0,
         errors: [],
         failedRows: [],
@@ -151,6 +152,10 @@ export const action = async ({ request }) => {
                             id
                             value
                         }
+                        minQtyMetafield: metafield(namespace: "$app", key: "gd_b2b_min_qty") {
+                            id
+                            value
+                        }
                         product {
                             id
                         }
@@ -171,7 +176,9 @@ export const action = async ({ request }) => {
                     price: parseFloat(node.price),
                     compareAtPrice: node.compareAtPrice ? parseFloat(node.compareAtPrice) : null,
                     b2bPrice: node.metafield?.value !== undefined && node.metafield?.value !== null ? parseFloat(node.metafield.value) : null,
-                    b2bMetafieldId: node.metafield?.id || null
+                    b2bMetafieldId: node.metafield?.id || null,
+                    minQty: node.minQtyMetafield?.value !== undefined && node.minQtyMetafield?.value !== null ? parseInt(node.minQtyMetafield.value, 10) : null,
+                    minQtyMetafieldId: node.minQtyMetafield?.id || null
                 });
             }
         });
@@ -225,6 +232,7 @@ export const action = async ({ request }) => {
             const priceRaw = row["Price"];
             const compareAtPriceRaw = row["CompareAt Price"];
             const b2bPriceRaw = row["B2B Price"];
+            const minQtyRaw = row["Min Qty"];
 
             let newPrice = null;
             if (priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== "") {
@@ -273,6 +281,23 @@ export const action = async ({ request }) => {
                 }
             }
 
+            let newMinQty = null;
+            let shouldClearMinQty = false;
+            
+            if (minQtyRaw !== undefined && minQtyRaw !== null) {
+                const trimmed = String(minQtyRaw).trim();
+                
+                if (trimmed.toLowerCase() === "null") {
+                    shouldClearMinQty = true;
+                    newMinQty = 0;
+                } else if (trimmed !== "") {
+                    const parsed = parseInt(trimmed, 10);
+                    if (!isNaN(parsed)) {
+                        newMinQty = parsed;
+                    }
+                }
+            }
+
 
             if (processedCombinations.has(skuKey)) {
                 results.errors.push(`Skipped SKU ${sku}: Duplicate SKU in file`);
@@ -317,23 +342,41 @@ export const action = async ({ request }) => {
                 compareAtUpdated = true;
             }
 
+            let minQtyUpdated = false;
+            variantInput.metafields = [];
+
             if (newB2BPrice !== null && variantData.b2bPrice !== newB2BPrice) {
-                if (variantData.b2bMetafieldId) {
-                    variantInput.metafields = [{
-                        id: variantData.b2bMetafieldId,
-                        value: String(newB2BPrice),
-                        type: "number_decimal"
-                    }];
-                } else {
-                    variantInput.metafields = [{
-                        namespace: "$app",
-                        key: "gd_b2b_price",
-                        value: String(newB2BPrice),
-                        type: "number_decimal"
-                    }];
-                }
+                variantInput.metafields.push(variantData.b2bMetafieldId ? {
+                    id: variantData.b2bMetafieldId,
+                    value: String(newB2BPrice),
+                    type: "number_decimal"
+                } : {
+                    namespace: "$app",
+                    key: "gd_b2b_price",
+                    value: String(newB2BPrice),
+                    type: "number_decimal"
+                });
                 needsUpdate = true;
                 b2bUpdated = true;
+            }
+
+            if (newMinQty !== null && variantData.minQty !== newMinQty) {
+                variantInput.metafields.push(variantData.minQtyMetafieldId ? {
+                    id: variantData.minQtyMetafieldId,
+                    value: String(newMinQty),
+                    type: "number_integer"
+                } : {
+                    namespace: "$app",
+                    key: "gd_b2b_min_qty",
+                    value: String(newMinQty),
+                    type: "number_integer"
+                });
+                needsUpdate = true;
+                minQtyUpdated = true;
+            }
+
+            if (variantInput.metafields.length === 0) {
+                delete variantInput.metafields;
             }
 
             if (!needsUpdate) {
@@ -358,7 +401,8 @@ export const action = async ({ request }) => {
                     if (availableSlots <= 0) {
                         // Limit reached - remove B2B price from update but continue with other prices
                         b2bLimitReached = true;
-                        delete variantInput.metafields;
+                        variantInput.metafields = variantInput.metafields.filter(m => m.key !== "gd_b2b_price" && m.id !== variantData.b2bMetafieldId);
+                        if (variantInput.metafields.length === 0) delete variantInput.metafields;
                         b2bUpdated = false; // Mark as not updated
                         results.limitReachedCount++;
                     } else {
@@ -370,7 +414,7 @@ export const action = async ({ request }) => {
             }
 
             // Check if we still have any updates after potentially removing B2B
-            const hasRemainingUpdates = priceUpdated || compareAtUpdated || b2bUpdated;
+            const hasRemainingUpdates = priceUpdated || compareAtUpdated || b2bUpdated || minQtyUpdated;
             
             if (!hasRemainingUpdates && b2bLimitReached) {
                 // Only B2B was being updated and it was blocked by limit
@@ -381,12 +425,14 @@ export const action = async ({ request }) => {
 
             if (priceUpdated) results.updatedPrice++;
             if (compareAtUpdated) results.updatedCompareAt++;
+            if (minQtyUpdated) results.updatedMinQty++;
             if (b2bUpdated) results.updatedB2B++;
 
             // Track which columns were updated
             const updatedColumns = [];
             if (priceUpdated) updatedColumns.push('Price updated');
             if (compareAtUpdated) updatedColumns.push('CompareAt Price updated');
+            if (minQtyUpdated) updatedColumns.push('Min Qty updated');
             if (b2bUpdated) updatedColumns.push('B2B Price updated');
             
             // Add to updated rows with simple reason
@@ -632,6 +678,7 @@ export default function ImportProductPrices() {
                            updated: validatedResults.expectedUpdateCount || 0,
                            updatedPrice: validatedResults.updatedPrice || 0,
                            updatedCompareAt: validatedResults.updatedCompareAt || 0,
+                           updatedMinQty: validatedResults.updatedMinQty || 0,
                            updatedB2B: validatedResults.updatedB2B || 0,
                            errors: [...validatedResults.errors, ...bulkRes.errors]
                        };
@@ -718,6 +765,7 @@ export default function ImportProductPrices() {
                                 <s-text as="p">Total rows: {displayResults.total}</s-text>
                                 <s-text as="p">Successfully updated Price: {displayResults.updatedPrice || 0}</s-text>
                                 <s-text as="p">Successfully updated CompareAt Price: {displayResults.updatedCompareAt || 0}</s-text>
+                                <s-text as="p">Successfully updated Min Qty: {displayResults.updatedMinQty || 0}</s-text>
                                 <s-text as="p">Successfully updated B2B Price: {displayResults.updatedB2B || 0}</s-text>
                                 <s-text as="p">Errors: {displayResults.errors.length}</s-text>
                             </s-stack>

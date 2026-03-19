@@ -181,6 +181,11 @@ export const action = async ({ request }) => {
 
     const bulkUpdates = formData.get("bulkUpdates");
     const bulkMinQty = formData.get("bulkMinQty");
+    
+    let totalSaved = 0;
+    let totalSkipped = 0;
+    let finalSkippedVariantIds = [];
+
     if (bulkUpdates) {
         const updates = JSON.parse(bulkUpdates);
 
@@ -343,12 +348,9 @@ export const action = async ({ request }) => {
             }
         }
 
-        return { 
-            success: true, 
-            saved: processedUpdates.length,
-            skipped: skippedAdditions.length,
-            skippedVariantIds: skippedVariantIds
-        };
+        totalSaved += processedUpdates.length;
+        totalSkipped = skippedAdditions.length;
+        finalSkippedVariantIds = skippedVariantIds;
     }
 
     // Handle min qty updates separately (no plan limit)
@@ -379,10 +381,15 @@ export const action = async ({ request }) => {
                 );
             }
         }
-        return { success: true, saved: minQtyUpdates.length, skipped: 0 };
+        totalSaved += minQtyUpdates.length;
     }
 
-    return { success: true };
+    return { 
+        success: true, 
+        saved: totalSaved, 
+        skipped: totalSkipped, 
+        skippedVariantIds: finalSkippedVariantIds 
+    };
 };
 
 export default function B2BPricing() {
@@ -617,22 +624,18 @@ export default function B2BPricing() {
             });
         });
 
+        const payload = {};
         if (updates.length > 0) {
             updates.sort((a, b) => a.timestamp - b.timestamp);
-            fetcher.submit(
-                { bulkUpdates: JSON.stringify(updates) },
-                { method: "POST" }
-            );
+            payload.bulkUpdates = JSON.stringify(updates);
         }
-
         if (minQtyUpdates.length > 0) {
-            fetcher.submit(
-                { bulkMinQty: JSON.stringify(minQtyUpdates) },
-                { method: "POST" }
-            );
+            payload.bulkMinQty = JSON.stringify(minQtyUpdates);
         }
 
-        if (updates.length === 0 && minQtyUpdates.length === 0) {
+        if (Object.keys(payload).length > 0) {
+            fetcher.submit(payload, { method: "POST" });
+        } else {
             shopify.toast.show("No changes to save on this page");
         }
     };

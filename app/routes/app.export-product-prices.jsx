@@ -112,6 +112,9 @@ export const action = async ({ request }) => {
                                             metafield(namespace: "$app", key: "gd_b2b_price") {
                                                 value
                                             }
+                                            minQtyMetafield: metafield(namespace: "$app", key: "gd_b2b_min_qty") {
+                                                value
+                                            }
                                         }
                                     }
                                 }
@@ -257,6 +260,9 @@ export default function ExportProductData() {
                         let b2bPrice = obj.metafield?.value ? parseFloat(obj.metafield.value) : null;
                         if (b2bPrice === 0) b2bPrice = null; // Export as empty cell if 0
 
+                        let minQty = obj.minQtyMetafield?.value ? parseInt(obj.minQtyMetafield.value, 10) : null;
+                        if (minQty === 0) minQty = null;
+
                         rows.push({
                             "Product Title": product?.title || "Unknown",
                             "SKU": obj.sku || "",
@@ -265,6 +271,7 @@ export default function ExportProductData() {
                             "Option3 Value": options["Option3 Value"],
                             "Price": obj.price ? parseFloat(obj.price) : null,
                             "CompareAt Price": obj.compareAtPrice ? parseFloat(obj.compareAtPrice) : null,
+                            "Min Qty": minQty,
                             "B2B Price": b2bPrice
                         });
                     }
@@ -282,6 +289,7 @@ export default function ExportProductData() {
                     "Option3 Value": "",
                     "Price": "",
                     "CompareAt Price": "",
+                    "Min Qty": "",
                     "B2B Price": ""
                  });
             }
