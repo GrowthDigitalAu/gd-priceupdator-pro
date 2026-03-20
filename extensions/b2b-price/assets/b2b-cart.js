@@ -116,9 +116,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch(window.Shopify.routes.root + 'cart.js');
       const cart = await res.json();
 
+      // Helper to proceed to checkout natively
+      const proceedToCheckout = () => {
+        if (isCheckoutBtn.tagName === 'A') {
+          window.location.href = isCheckoutBtn.href || '/checkout';
+        } else if (isCheckoutBtn.closest && isCheckoutBtn.closest('form')) {
+          isCheckoutBtn.closest('form').submit();
+        } else {
+          window.location.href = '/checkout';
+        }
+      };
+
       // If cart is empty or has no value, don't intercept
       if (!cart.item_count || !cart.total_price) {
-        isCheckoutBtn.click(); // re-trigger naturally
+        proceedToCheckout();
         return;
       }
 
@@ -129,8 +140,8 @@ document.addEventListener('DOMContentLoaded', () => {
         currentEvent = e;
         modal.style.display = 'flex';
       } else {
-        // Threshold met or already opted out — re-trigger the click naturally
-        isCheckoutBtn.click();
+        // Threshold met or already opted out — re-trigger natively
+        proceedToCheckout();
       }
     } catch (err) {
       console.error("Cart check failed", err);
