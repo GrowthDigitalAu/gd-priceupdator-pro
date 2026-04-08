@@ -127,7 +127,8 @@ if (!customElements.get('b2b-prod-price')) {
 
         if (isB2B && data.b2b_price && data.b2b_price > 0) {
            const minQtyText = this.config.minQtyText;
-           const minQtyBadge = (data.b2b_min_qty && data.b2b_min_qty > 1 && minQtyText) 
+           const minQtyEnabled = this.config.minQtyEnabled !== false; // Default to true if missing
+           const minQtyBadge = (minQtyEnabled && data.b2b_min_qty && data.b2b_min_qty > 1 && minQtyText) 
                 ? `<div class="b2b-min-qty-text b2b-min-qty-wrapper"><span class="b2b-min-qty-inner-text">${minQtyText.replace('[b2b_min_qty]', data.b2b_min_qty)}</span></div>` 
                 : '';
            html = `
@@ -178,8 +179,25 @@ if (!customElements.get('b2b-prod-price')) {
     bindEvents() {
         if (this.hasBoundEvents) return;
         
+        this._lastVariantId = document.querySelector('input[name="id"]')?.value || this.config.selectedVariantId;
         this.onVariantChange = this.handleVariantChange.bind(this);
+        
         document.body.addEventListener('change', this.onVariantChange);
+        document.body.addEventListener('click', this.onVariantChange);
+        
+        
+        // Add To Cart Interceptor
+        this.onAddToCart = this.handleAddCart.bind(this);
+        document.body.addEventListener('submit', this.onAddToCart, true);
+        document.body.addEventListener('click', this.onAddToCart, true);
+        
+        this.pollInterval = setInterval(() => {
+             const currentId = document.querySelector('input[name="id"]')?.value;
+             if (currentId && currentId !== this._lastVariantId) {
+                  this._lastVariantId = currentId;
+                  this.updatePriceDisplay(currentId, false);
+             }
+        }, 300);
 
         this.hasBoundEvents = true;
     }
@@ -187,65 +205,180 @@ if (!customElements.get('b2b-prod-price')) {
     unbindEvents() {
         if (!this.hasBoundEvents) return;
         document.body.removeEventListener('change', this.onVariantChange);
+        document.body.removeEventListener('click', this.onVariantChange);
+        if (this.onAddToCart) {
+            document.body.removeEventListener('submit', this.onAddToCart, true);
+            document.body.removeEventListener('click', this.onAddToCart, true);
+        }
+        if (this.pollInterval) clearInterval(this.pollInterval);
         this.hasBoundEvents = false;
     }
 
-    safeObserveAndTrigger(productContainer, stickyAddCartPresent) {
-        if (!productContainer.contains(this) && productContainer !== this) {
-             if (!productContainer.querySelector(`#${this.id}`)) {
-                 return; 
-             }
-        }
-        this.observeAndTriggerUpdate(productContainer, stickyAddCartPresent);
-    }
-
     handleVariantChange(e) {
-        if (e.target.matches('.js-gd-ext-variant-picker')) {
-             const productContainer = e.target.closest('.js-gd-ext-product-info-container');
-             if (productContainer) {
-                const stickyAddCartPresent = !!e.target.closest('.js-gd-ext-pdp-info-section')?.querySelector('.js-gd-ext-sticky-add-to-cart-price');
-                this.safeObserveAndTrigger(productContainer, stickyAddCartPresent);
-             }
+        const isVariantChange = e.target.matches('.js-gd-ext-variant-picker') || 
+                                e.target.closest('variant-selects') || 
+                                e.target.closest('variant-radios') || 
+                                e.target.name === 'id' || 
+                                e.target.closest('.variant-input') || 
+                                e.target.closest('form[action*="/cart/add"]');
+                                
+        if (isVariantChange) {
+             // Wait briefly for theme to update hidden input value
+             setTimeout(() => {
+                 const variantInput = document.querySelector('input[name="id"]') || document.querySelector('.js-gd-ext-selected-variant-id');
+                 if (variantInput && variantInput.value && variantInput.value !== this._lastVariantId) {
+                     this._lastVariantId = variantInput.value;
+                     this.updatePriceDisplay(variantInput.value, false);
+                 }
+             }, 100);
         }
     }
 
-    observeAndTriggerUpdate(productContainer, stickyAddCartPresent) {
-        if (productContainer) {
-          const variantInput = productContainer.querySelector('.js-gd-ext-selected-variant-id');
-          if (variantInput) {
-            
-            if (this.currentObserver) {
-                this.currentObserver.disconnect();
-                this.currentObserver = null;
-            }
-
-            const observer = new MutationObserver((mutations) => {
-              mutations.forEach((mutation) => {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'value') {
-                  const updatedVariantId = variantInput.value;
-                  if (updatedVariantId) {
-                    this.updatePriceDisplay(updatedVariantId, stickyAddCartPresent);
-                    observer.disconnect();
-                    this.currentObserver = null;
-                  }
-                }
-              });
-            });
-            
-            this.currentObserver = observer;
-            observer.observe(variantInput, { attributes: true });
-            
-            setTimeout(() => {
-              if(variantInput.value) {
-                this.updatePriceDisplay(variantInput.value, stickyAddCartPresent);
-              }
-            }, 500);
-            return;
-          }
+    handleAddCart(e) {
+        let isAddToCartEvent = false;
+        let form = null;
+        
+        if (e.type === 'submit') {
+             form = e.target.closest('form[action*="/cart/add"], form.product-form');
+             if (form) isAddToCartEvent = true;
+        } else if (e.type === 'click') {
+             const btn = e.target.closest('button[name="add"], button[type="submit"], .add-to-cart, .product-form__submit, [id*="AddToCart"]');
+             if (btn) {
+                 form = btn.closest('form[action*="/cart/add"], form.product-form') || document.querySelector('form[action*="/cart/add"], form.product-form');
+                 if (form || btn.name === 'add' || btn.classList.contains('add-to-cart') || btn.classList.contains('product-form__submit')) {
+                     isAddToCartEvent = true;
+                 }
+             }
         }
         
-        let fallbackVariantId = this.config.selectedVariantId;  
-        if(fallbackVariantId) this.updatePriceDisplay(fallbackVariantId, stickyAddCartPresent);
+        if (!isAddToCartEvent) return;
+
+        // Check if B2B conditions met
+        if (!this.config || !this.config.isB2B) return;
+        
+        // Which variant is added? Use form input first, fallback to global input, fallback to last variant
+        const idInput = form ? form.querySelector('input[name="id"]') : null;
+        const variantId = idInput ? idInput.value : (document.querySelector('input[name="id"]')?.value || this._lastVariantId);
+        if (!variantId) return;
+
+        const data = this.config.variantsData[variantId];
+        if (!data || !data.b2b_price || !data.b2b_min_qty || data.b2b_min_qty <= 1) return;
+
+        // What is the quantity requested? Look globally first because modern themes often put it outside the form body
+        const qtyInput = document.querySelector('input[name="quantity"]') || (form ? form.querySelector('input[name="quantity"]') : null);
+        let qty = 1;
+        if (qtyInput && qtyInput.value) {
+             qty = parseInt(qtyInput.value, 10);
+        }
+
+        // Only run minimum quantity enforcement if enabled
+        const minQtyEnabled = this.config.minQtyEnabled !== false;
+        if (!minQtyEnabled) return;
+
+        if (qty > 0 && qty < data.b2b_min_qty) {
+             e.preventDefault();
+             e.stopPropagation();
+             e.stopImmediatePropagation();
+             
+             this.showMinQtyModal(data.b2b_min_qty);
+             return;
+        }
+
+        // If the quantity check passed, secretly inject the minimum quantity requirement rule as a Cart Property!
+        // This ensures the Cart Drawer cannot bypass the restriction!
+        if (form) {
+             let minQtyPropInput = form.querySelector('input[name="properties[_gd_b2b_min_qty]"]');
+             if (!minQtyPropInput) {
+                  minQtyPropInput = document.createElement('input');
+                  minQtyPropInput.type = 'hidden';
+                  minQtyPropInput.name = 'properties[_gd_b2b_min_qty]';
+                  form.appendChild(minQtyPropInput);
+             }
+             minQtyPropInput.value = data.b2b_min_qty;
+        }
+    }
+    
+    showMinQtyModal(minQty) {
+        let modal = document.getElementById('gd-b2b-qty-modal');
+        if (!modal) {
+            const style = document.createElement('style');
+            style.innerHTML = `
+                #gd-b2b-qty-modal {
+                    position: fixed;
+                    top: 0; left: 0; width: 100vw; height: 100vh;
+                    background: rgba(0,0,0,0.6);
+                    display: flex; align-items: center; justify-content: center;
+                    z-index: 9999999;
+                    backdrop-filter: blur(2px);
+                }
+                .gd-b2b-qty-modal-content {
+                    background: #fff;
+                    padding: 36px 30px;
+                    border-radius: 12px;
+                    max-width: 400px;
+                    width: 90%;
+                    text-align: center;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+                    font-family: inherit;
+                    animation: gdPopIn 0.3s ease-out;
+                }
+                @keyframes gdPopIn {
+                    from { opacity: 0; transform: scale(0.9); }
+                    to { opacity: 1; transform: scale(1); }
+                }
+                .gd-b2b-qty-modal-title {
+                    margin-top: 0;
+                    color: #111;
+                    font-size: 1.4rem;
+                    font-weight: bold;
+                    margin-bottom: 12px;
+                    line-height: 1.3;
+                }
+                .gd-b2b-qty-modal-text {
+                    color: #444;
+                    margin-bottom: 24px;
+                    font-size: 1rem;
+                    line-height: 1.5;
+                }
+                .gd-b2b-qty-modal-text strong {
+                    color: #d8000c;
+                    background: #ffeaeb;
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                    font-size: 1.1em;
+                }
+                .gd-b2b-qty-btn {
+                    background: #111;
+                    color: #fff;
+                    border: none;
+                    padding: 12px 28px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-weight: 600;
+                    font-size: 1rem;
+                    width: 100%;
+                    transition: background 0.2s ease;
+                }
+                .gd-b2b-qty-btn:hover {
+                    background: #333;
+                }
+            `;
+            document.head.appendChild(style);
+
+            modal = document.createElement('div');
+            modal.id = 'gd-b2b-qty-modal';
+            modal.innerHTML = `
+                <div class="gd-b2b-qty-modal-content">
+                    <h3 class="gd-b2b-qty-modal-title">Minimum Quantity Required</h3>
+                    <p class="gd-b2b-qty-modal-text">You must add at least <strong id="gd-b2b-qty-req"></strong> items of this variant to your cart to qualify for wholesale pricing.</p>
+                    <button class="gd-b2b-qty-btn" onclick="document.getElementById('gd-b2b-qty-modal').style.display='none'">Got it</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        document.getElementById('gd-b2b-qty-req').innerText = minQty;
+        modal.style.display = 'flex';
     }
   }
   customElements.define("b2b-prod-price", B2bProdPrice);

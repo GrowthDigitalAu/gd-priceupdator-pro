@@ -74,7 +74,7 @@ if (!customElements.get('b2b-card-price')) {
           return;
       }
 
-      const { variantsData, moneyFormat, isB2B, minQtyText } = config;
+      const { variantsData, moneyFormat, isB2B, minQtyText, minQtyEnabled } = config;
       const variants = Object.values(variantsData);
       
       if (variants.length === 0) return;
@@ -110,7 +110,7 @@ if (!customElements.get('b2b-card-price')) {
            }
 
            const winningVariant = variants.find(v => v.b2b_price === displayPrice);
-           if (winningVariant && winningVariant.b2b_min_qty > 1 && minQtyText) {
+           if (minQtyEnabled !== false && winningVariant && winningVariant.b2b_min_qty > 1 && minQtyText) {
                const text = minQtyText.replace('[b2b_min_qty]', winningVariant.b2b_min_qty);
                minQtyHtml = `<div class="b2b-min-qty-text b2b-min-qty-wrapper"><span class="b2b-min-qty-inner-text">${text}</span></div>`;
            }

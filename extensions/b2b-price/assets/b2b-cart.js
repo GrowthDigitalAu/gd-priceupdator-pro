@@ -2,39 +2,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const modal = document.getElementById('gd-b2b-cart-modal');
   if (!modal) return;
 
-  const checkbox = document.getElementById('gd-b2b-opt-out-checkbox');
   const btnCancel = document.getElementById('gd-b2b-modal-cancel');
-  const btnCheckout = document.getElementById('gd-b2b-modal-checkout');
   let currentEvent = null;
 
-  // ─── Helper: clear the opt-out attribute from the cart ────────────────────
-  async function clearOptOut() {
-    try {
-      await fetch(window.Shopify.routes.root + 'cart/update.js', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ attributes: { 'gd_b2b_checkout_retail': '' } })
-      });
-    } catch (e) {
-      // silent fail – not critical
-    }
+  // ─── Check for persistent alerts from previous reloads ────────────────────
+  if (sessionStorage.getItem('gd_b2b_qty_alert') === 'true') {
+      sessionStorage.removeItem('gd_b2b_qty_alert');
+      document.querySelector('.gd-b2b-modal-title').innerText = "Minimum Quantity Restored";
+      document.querySelector('.gd-b2b-modal-text').innerHTML = `You attempted to lower the quantity of an item below its wholesale requirement.<br><br>Your cart has been automatically corrected to the minimum required quantity.`;
+      if (modal) modal.style.display = 'flex';
   }
 
-  // ─── Auto-clear on every page load ────────────────────────────────────────
-  // The opt-out flag exists only to pass through checkout. As soon as the user
-  // is back on any storefront page, wipe it so discounts are immediately visible.
-  clearOptOut();
+  // ─── Perform a sweep on Page Load to catch unsynced cart quantities ─────
+  enforceCartMinimumQuantities();
 
   // ─── Auto-restore: clear opt-out whenever the cart is modified ───────────
   // Intercept fetch() calls for cart/change.js and cart/add.js
   const _originalFetch = window.fetch;
   window.fetch = async function (...args) {
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-    const isCartChange = /cart\/(change|add)\.js/.test(url);
+    const isCartChange = /cart\/(change|add|update)/i.test(url) && !/cart\.js/i.test(url);
     const result = await _originalFetch.apply(this, args);
     if (isCartChange && result.ok) {
-      // Fire-and-forget – clear the opt out flag
-      clearOptOut();
+      enforceCartMinimumQuantities();
     }
     return result;
   };
@@ -48,47 +38,62 @@ document.addEventListener('DOMContentLoaded', () => {
   const _send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (...args) {
     this.addEventListener('load', () => {
-      if (/cart\/(change|add)\.js/.test(this._gdUrl || '')) {
-        clearOptOut();
+      const u = this._gdUrl || '';
+      if (/cart\/(change|add|update)/i.test(u) && !/cart\.js/i.test(u)) {
+        enforceCartMinimumQuantities();
       }
     });
     return _send.apply(this, args);
   };
 
-  // ─── Modal UI logic ───────────────────────────────────────────────────────
-  checkbox.addEventListener('change', (e) => {
-    btnCheckout.disabled = !e.target.checked;
-  });
+  // ─── Enforce Minimum Quantities in Cart ────────────────────────────────
+  async function enforceCartMinimumQuantities() {
+      try {
+          const res = await _originalFetch((window.Shopify?.routes?.root || '/') + 'cart.js');
+          const cart = await res.json();
+          let needsUpdate = false;
+          let updates = {};
+          
+          if (cart.items) {
+             cart.items.forEach(item => {
+                 let minQty = 0;
+                 if (item.properties && item.properties._gd_b2b_min_qty) {
+                     minQty = parseInt(item.properties._gd_b2b_min_qty, 10);
+                 } else if (window.GDB2B_CART_MIN_QTYS && window.GDB2B_CART_MIN_QTYS[item.variant_id]) {
+                     minQty = window.GDB2B_CART_MIN_QTYS[item.variant_id];
+                 }
 
+                 console.log(`[B2B Wholesale] Checking item: ${item.title}`);
+                 console.log(`[B2B Wholesale] -> Current Cart QTY: ${item.quantity}`);
+                 console.log(`[B2B Wholesale] -> Required Min QTY: ${minQty || 'None'}`);
+
+                 if (minQty > 0 && item.quantity > 0 && item.quantity < minQty) {
+                      console.log(`[B2B Wholesale] -> VIOLATION DETECTED! Updating to ${minQty}...`);
+                      updates[item.key] = minQty;
+                      needsUpdate = true;
+                 } else {
+                      console.log(`[B2B Wholesale] -> Status: OK`);
+                 }
+             });
+          }
+          
+          if (needsUpdate) {
+              await _originalFetch((window.Shopify?.routes?.root || '/') + 'cart/update.js', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ updates })
+              });
+              
+              // Instead of reloading, safely redirect to the cart page to cleanly wipe cart drawer state
+              sessionStorage.setItem('gd_b2b_qty_alert', 'true');
+              window.location.href = (window.Shopify?.routes?.root || '/') + 'cart';
+          }
+      } catch (e) {}
+  }
+
+  // ─── Modal UI logic ───────────────────────────────────────────────────────
   btnCancel.addEventListener('click', () => {
     modal.style.display = 'none';
-    checkbox.checked = false;
-    btnCheckout.disabled = true;
-  });
-
-  btnCheckout.addEventListener('click', async () => {
-    btnCheckout.disabled = true;
-    const originalText = btnCheckout.innerText;
-    btnCheckout.innerText = "Applying...";
-
-    try {
-      await fetch(window.Shopify.routes.root + 'cart/update.js', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          attributes: { 'gd_b2b_checkout_retail': 'true' }
-        })
-      });
-
-      if (currentEvent && currentEvent.target && currentEvent.target.closest('form[action="/cart"], form[action^="/checkout"]')) {
-        currentEvent.target.closest('form').submit();
-      } else {
-        window.location.href = '/checkout';
-      }
-    } catch (err) {
-      console.error(err);
-      window.location.href = '/checkout';
-    }
   });
 
   // ─── Checkout button intercept ────────────────────────────────────────────
@@ -100,20 +105,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isCheckoutBtn) return;
     if (e.target.closest('#gd-b2b-cart-modal')) return;
 
-    // Only intercept if a min order threshold is configured
-    const minOrder = window.GDB2B_MIN_ORDER_CENTS || 0;
-    if (!minOrder) return; // No minimum set — let Shopify handle it
-
-    // Old B2B customers (with 'old_b2b_customer' tag) are exempt from the minimum
-    if (window.GDB2B_IS_OLD_CUSTOMER) return;
-
     try {
       // We MUST temporarily pause the click to check the cart asynchronously.
       // We only call preventDefault here; we will re-allow if no modal is needed.
       e.preventDefault();
       e.stopPropagation();
 
-      const res = await fetch(window.Shopify.routes.root + 'cart.js');
+      const res = await fetch((window.Shopify?.routes?.root || '/') + 'cart.js');
       const cart = await res.json();
 
       // Helper to proceed to checkout natively
@@ -133,14 +131,43 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const isAlreadyOptedOut = cart.attributes && cart.attributes['gd_b2b_checkout_retail'] === 'true';
+      let hasMinQtyViolation = false;
+      let minQtyViolationMsg = '';
+      if (cart.items) {
+          cart.items.forEach(item => {
+              let minQty = 0;
+              if (item.properties && item.properties._gd_b2b_min_qty) {
+                  minQty = parseInt(item.properties._gd_b2b_min_qty, 10);
+              } else if (window.GDB2B_CART_MIN_QTYS && window.GDB2B_CART_MIN_QTYS[item.variant_id]) {
+                  minQty = window.GDB2B_CART_MIN_QTYS[item.variant_id];
+              }
 
-      if (cart.total_price < minOrder && !isAlreadyOptedOut) {
-        // Show the opt-out modal
+              if (minQty > 0 && item.quantity > 0 && item.quantity < minQty) {
+                  hasMinQtyViolation = true;
+                  minQtyViolationMsg += `&bull; <strong>${item.title}</strong> requires at least ${minQty}.<br>`;
+              }
+          });
+      }
+
+      if (hasMinQtyViolation) {
+          currentEvent = e;
+          document.querySelector('.gd-b2b-modal-title').innerText = "Minimum Quantity Error";
+          document.querySelector('.gd-b2b-modal-text').innerHTML = `You have items in your cart that do not meet the minimum B2B order quantity:<br><br>${minQtyViolationMsg}<br>Please adjust your cart to proceed.`;
+          modal.style.display = 'flex';
+          return;
+      }
+
+      const minOrder = window.GDB2B_MIN_ORDER_CENTS || 0;
+      const requiresMinOrderCheck = minOrder > 0 && !window.GDB2B_IS_OLD_CUSTOMER;
+
+      if (requiresMinOrderCheck && cart.total_price < minOrder) {
+        // Show the hard block modal
         currentEvent = e;
+        document.querySelector('.gd-b2b-modal-title').innerText = "B2B Minimum Order Not Met";
+        document.querySelector('.gd-b2b-modal-text').innerHTML = `Your wholesale subtotal is under the required <strong>$${(minOrder/100).toFixed(2)}</strong> minimum.`;
         modal.style.display = 'flex';
       } else {
-        // Threshold met or already opted out — re-trigger natively
+        // Threshold met — re-trigger natively
         proceedToCheckout();
       }
     } catch (err) {

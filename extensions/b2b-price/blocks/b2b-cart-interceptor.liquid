@@ -30,16 +30,8 @@
         <strong>{{ block.settings.min_order_value | money_without_trailing_zeros }}</strong> minimum.
       </p>
 
-      <div class="gd-b2b-modal-checkbox-wrap">
-        <input type="checkbox" id="gd-b2b-opt-out-checkbox">
-        <label for="gd-b2b-opt-out-checkbox"
-          >I want to checkout now at regular retail prices (wholesale discounts will be removed).</label
-        >
-      </div>
-
       <div class="gd-b2b-modal-actions">
-        <button id="gd-b2b-modal-cancel" class="gd-b2b-btn-secondary">Keep Shopping</button>
-        <button id="gd-b2b-modal-checkout" class="gd-b2b-btn-primary" disabled>Proceed to Checkout</button>
+        <button id="gd-b2b-modal-cancel" class="gd-b2b-btn-primary">Keep Shopping</button>
       </div>
     </div>
   </div>
@@ -47,6 +39,19 @@
   <script>
     window.GDB2B_MIN_ORDER_CENTS = {{ block.settings.min_order_value | default: 0 | times: 100 }};
     window.GDB2B_IS_OLD_CUSTOMER = {% if customer.tags contains 'old_b2b_customer' %}true{% else %}false{% endif %};
+    window.GDB2B_CUSTOMER_ORDERS_COUNT = {{ customer.orders_count | default: 0 }};
+
+    window.GDB2B_CART_MIN_QTYS = {};
+    {% for item in cart.items %}
+      {% for v in item.product.variants %}
+        {% if v.id == item.variant_id %}
+          {% assign min_qty = v.metafields["$app"].gd_b2b_min_qty.value %}
+          {% if min_qty %}
+            window.GDB2B_CART_MIN_QTYS["{{ item.variant_id }}"] = {{ min_qty | plus: 0 }};
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
   </script>
   <script src="{{ 'b2b-cart.js' | asset_url }}" defer></script>
   {{ 'b2b-cart.css' | asset_url | stylesheet_tag }}

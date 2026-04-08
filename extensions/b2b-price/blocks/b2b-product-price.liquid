@@ -24,7 +24,7 @@
               {{- current_variant.price | money_with_currency -}}
             </span>
           </div>
-          {% if b2b_min_qty and b2b_min_qty > 1 %}
+          {% if b2b_min_qty and b2b_min_qty > 1 and block.settings.enable_min_qty_rule %}
             <div class="b2b-min-qty-text b2b-min-qty-wrapper">
               <span class="b2b-min-qty-inner-text">
                 {{- block.settings.min_qty_text | replace: '[b2b_min_qty]', b2b_min_qty -}}
@@ -62,7 +62,8 @@
         },
         "blockId": "{{ block.id }}",
         "selectedVariantId": "{{ selected_product.selected_or_first_available_variant.id }}",
-        "minQtyText": {{ block.settings.min_qty_text | json }}
+        "minQtyText": {{ block.settings.min_qty_text | json }},
+        "minQtyEnabled": {{ block.settings.enable_min_qty_rule | json }}
       }
     </script>
 
@@ -99,6 +100,13 @@
       "label": "Min Qty Text",
       "default": "A minimum quantity of [b2b_min_qty] is required to qualify for this price.",
       "info": "Use \"[b2b_min_qty]\" to display the minimum quantity."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_min_qty_rule",
+      "label": "Enable Minimum Quantity Rule",
+      "default": true,
+      "info": "If checked, prevents a B2B customer from adding less than the required minimum quantity to their cart."
     },
     {
       "type": "textarea",
