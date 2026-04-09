@@ -16,7 +16,7 @@ export const action = async ({ request }) => {
         }
         
         const newPlanName = appSubscription.name || null;
-        const newLimit = getVariantLimitForPlan(newPlanName);
+        const newLimit = getVariantLimitForPlan(newPlanName, shop);
         
         console.log(`📊 Plan changed to: ${newPlanName || "Free"}, New limit: ${newLimit || "unlimited"}`);
         

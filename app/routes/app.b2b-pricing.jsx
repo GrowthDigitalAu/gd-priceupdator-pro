@@ -31,7 +31,7 @@ export const loader = async ({ request }) => {
     const activeSubscriptions = billingJson.data?.currentAppInstallation?.activeSubscriptions || [];
     const subscription = activeSubscriptions[0] || null;
     const planName = subscription?.name || null;
-    const variantLimit = getVariantLimitForPlan(planName);
+    const variantLimit = getVariantLimitForPlan(planName, session.shop);
 
     let queryVariables = {
         first: 10,
@@ -206,7 +206,7 @@ export const action = async ({ request }) => {
         const billingJson = await billingCheck.json();
         const activeSubscriptions = billingJson.data?.currentAppInstallation?.activeSubscriptions || [];
         const planName = activeSubscriptions[0]?.name || null;
-        const variantLimit = getVariantLimitForPlan(planName);
+        const variantLimit = getVariantLimitForPlan(planName, session.shop);
 
 
         const countResponse = await admin.graphql(

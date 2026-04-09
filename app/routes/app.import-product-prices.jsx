@@ -68,7 +68,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
     const dataString = formData.get("data");
     const headersString = formData.get("headers");
@@ -135,7 +135,7 @@ export const action = async ({ request }) => {
     const billingJson = await billingCheck.json();
     const activeSubscriptions = billingJson.data?.currentAppInstallation?.activeSubscriptions || [];
     const planName = activeSubscriptions[0]?.name || null;
-    const variantLimit = getVariantLimitForPlan(planName);
+    const variantLimit = getVariantLimitForPlan(planName, session.shop);
 
     while (hasNextPage) {
         const query = `#graphql
